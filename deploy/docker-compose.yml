@@ -1,0 +1,55 @@
+services:
+  #  ----------------------------------------------------------------
+  # 新建 PostgreSQL 容器（使用已有容器时注释此块）
+  # -----------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    container_name: zonelease-postgres
+    restart: unless-stopped
+    networks:
+      - zonelease_network
+    ports:
+      - 5432:5432
+    volumes:
+      - ./PgSqlData:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      TZ: Asia/Shanghai
+
+  #  ----------------------------------------------------------------
+  # 新建 Redis 容器（使用已有容器时注释此块）
+  # -----------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: zonelease-redis
+    restart: unless-stopped
+    networks:
+      - zonelease_network
+    command: redis-server --requirepass ${REDIS_PASSWORD:-123456} --appendonly yes
+    volumes:
+      - ./RedisData:/data
+
+  zonelease:
+    image: registry.cn-shenzhen.aliyuncs.com/zyx3721/zonelease:latest
+    container_name: zonelease
+    restart: unless-stopped
+    networks:
+      - zonelease_network
+    ports:
+      - 80:80
+    env_file:
+      - .env
+    volumes:
+      - ./ZLData:/app/data
+    # ----------------------------------------------------------------
+    # 依赖新建容器（使用已有容器时注释此块）
+    # ----------------------------------------------------------------
+    depends_on:
+      - postgres
+      - redis
+
+networks:
+  zonelease_network:
+    driver: bridge
