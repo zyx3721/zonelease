@@ -27,12 +27,13 @@ func (s *Store) ReplaceDHCPScopes(ctx context.Context, serverID string, scopes [
 		normalizeScopeLeaseDuration(&scope)
 		var id string
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO dhcp_scopes(name, description, subnet, start_range, end_range, lease_duration_hours, lease_duration_seconds, state, server_id, external_id, last_synced_at, sync_status, last_error)
-			VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), 'synced', '')
+			INSERT INTO dhcp_scopes(name, description, subnet, default_gateway, start_range, end_range, lease_duration_hours, lease_duration_seconds, state, server_id, external_id, last_synced_at, sync_status, last_error)
+			VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), 'synced', '')
 			ON CONFLICT (server_id, external_id) WHERE external_id <> '' DO UPDATE SET
 				name=EXCLUDED.name,
 				description=EXCLUDED.description,
 				subnet=EXCLUDED.subnet,
+				default_gateway=EXCLUDED.default_gateway,
 				start_range=EXCLUDED.start_range,
 				end_range=EXCLUDED.end_range,
 				lease_duration_hours=EXCLUDED.lease_duration_hours,
@@ -43,7 +44,7 @@ func (s *Store) ReplaceDHCPScopes(ctx context.Context, serverID string, scopes [
 				last_error='',
 				updated_at=now()
 			RETURNING id::text
-		`, scope.Name, scope.Description, scope.Subnet, scope.StartRange, scope.EndRange, scope.LeaseDurationHours, scope.LeaseDurationSeconds, scope.State, serverID, scope.ExternalID).Scan(&id); err != nil {
+		`, scope.Name, scope.Description, scope.Subnet, scope.DefaultGateway, scope.StartRange, scope.EndRange, scope.LeaseDurationHours, scope.LeaseDurationSeconds, scope.State, serverID, scope.ExternalID).Scan(&id); err != nil {
 			return err
 		}
 		keepScopeIDs = append(keepScopeIDs, id)
@@ -73,12 +74,13 @@ func (s *Store) ReplaceDHCPScopeSnapshot(ctx context.Context, serverID string, s
 	normalizeScopeLeaseDuration(&scope)
 	var scopeID string
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO dhcp_scopes(name, description, subnet, start_range, end_range, lease_duration_hours, lease_duration_seconds, state, server_id, external_id, last_synced_at, sync_status, last_error)
-		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), 'synced', '')
+		INSERT INTO dhcp_scopes(name, description, subnet, default_gateway, start_range, end_range, lease_duration_hours, lease_duration_seconds, state, server_id, external_id, last_synced_at, sync_status, last_error)
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), 'synced', '')
 		ON CONFLICT (server_id, external_id) WHERE external_id <> '' DO UPDATE SET
 			name=EXCLUDED.name,
 			description=EXCLUDED.description,
 			subnet=EXCLUDED.subnet,
+			default_gateway=EXCLUDED.default_gateway,
 			start_range=EXCLUDED.start_range,
 			end_range=EXCLUDED.end_range,
 			lease_duration_hours=EXCLUDED.lease_duration_hours,
@@ -89,7 +91,7 @@ func (s *Store) ReplaceDHCPScopeSnapshot(ctx context.Context, serverID string, s
 			last_error='',
 			updated_at=now()
 		RETURNING id::text
-	`, scope.Name, scope.Description, scope.Subnet, scope.StartRange, scope.EndRange, scope.LeaseDurationHours, scope.LeaseDurationSeconds, scope.State, serverID, scope.ExternalID).Scan(&scopeID); err != nil {
+	`, scope.Name, scope.Description, scope.Subnet, scope.DefaultGateway, scope.StartRange, scope.EndRange, scope.LeaseDurationHours, scope.LeaseDurationSeconds, scope.State, serverID, scope.ExternalID).Scan(&scopeID); err != nil {
 		return err
 	}
 

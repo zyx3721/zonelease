@@ -39,6 +39,7 @@ func (r *Router) createExclusion(w http.ResponseWriter, req *http.Request) {
 	agentCtx, cancel := context.WithTimeout(req.Context(), r.agentOperationTimeout(req.Context()))
 	defer cancel()
 	if err := r.agent.Post(agentCtx, server.AgentURL, server.APIKey, "/dhcp/exclusions", body, &agentExclusion, server.TLSInsecure); err != nil {
+		r.markDHCPScopeDirtyAfterAgentFailure(refreshTarget, err)
 		writeError(w, http.StatusBadGateway, "agent_create_exclusion_failed", "Agent 创建 DHCP 排除范围失败："+err.Error())
 		return
 	}
@@ -94,6 +95,7 @@ func (r *Router) deleteExclusion(w http.ResponseWriter, req *http.Request) {
 	agentCtx, cancel := context.WithTimeout(req.Context(), r.agentOperationTimeout(req.Context()))
 	defer cancel()
 	if err := r.agent.Post(agentCtx, server.AgentURL, server.APIKey, "/dhcp/exclusions/delete", body, &ignored, server.TLSInsecure); err != nil {
+		r.markDHCPScopeDirtyAfterAgentFailure(refreshTarget, err)
 		writeError(w, http.StatusBadGateway, "agent_delete_exclusion_failed", "Agent 删除 DHCP 排除范围失败："+err.Error())
 		return
 	}

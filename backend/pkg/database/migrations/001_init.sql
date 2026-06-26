@@ -140,7 +140,9 @@ END $$;
 CREATE TABLE IF NOT EXISTS dhcp_scopes (
   id UUID PRIMARY KEY DEFAULT (md5(random()::text || clock_timestamp()::text)::uuid),
   name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
   subnet TEXT NOT NULL,
+  default_gateway TEXT NOT NULL DEFAULT '',
   start_range TEXT NOT NULL,
   end_range TEXT NOT NULL,
   lease_duration_hours INT NOT NULL DEFAULT 24,
@@ -179,6 +181,18 @@ CREATE TABLE IF NOT EXISTS dhcp_reservations (
   external_id TEXT NOT NULL DEFAULT '',
   last_synced_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- DHCP 排除范围快照表，保存作用域下不可分配的地址范围
+CREATE TABLE IF NOT EXISTS dhcp_exclusions (
+  id UUID PRIMARY KEY DEFAULT (md5(random()::text || clock_timestamp()::text)::uuid),
+  scope_id UUID NOT NULL REFERENCES dhcp_scopes(id) ON DELETE CASCADE,
+  start_ip TEXT NOT NULL,
+  end_ip TEXT NOT NULL,
+  external_id TEXT NOT NULL DEFAULT '',
+  last_synced_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- DNS 区域快照表，保存从 DNS Agent 同步的区域属性和同步状态
@@ -255,6 +269,7 @@ CREATE INDEX IF NOT EXISTS idx_dhcp_leases_scope_id ON dhcp_leases(scope_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_dhcp_scopes_server_external ON dhcp_scopes(server_id, external_id) WHERE external_id <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_dhcp_leases_scope_ip ON dhcp_leases(scope_id, ip);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_dhcp_reservations_scope_ip ON dhcp_reservations(scope_id, ip);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dhcp_exclusions_scope_range ON dhcp_exclusions(scope_id, start_ip, end_ip);
 CREATE INDEX IF NOT EXISTS idx_dns_zones_server_id ON dns_zones(server_id);
 CREATE INDEX IF NOT EXISTS idx_dns_records_zone_id ON dns_records(zone_id);
 CREATE INDEX IF NOT EXISTS idx_audit_entries_ts ON audit_entries(ts DESC);

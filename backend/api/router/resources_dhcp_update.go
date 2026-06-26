@@ -14,6 +14,13 @@ type agentReservationUpdatePayload struct {
 	New domain.DHCPReservation `json:"new"`
 }
 
+type agentScopeUpdatePayload struct {
+	domain.DHCPScope
+	OldStartRange string   `json:"oldStartRange,omitempty"`
+	OldEndRange   string   `json:"oldEndRange,omitempty"`
+	ChangedFields []string `json:"changedFields,omitempty"`
+}
+
 func (r *Router) updateScope(w http.ResponseWriter, req *http.Request) {
 	if !r.ensurePermission(w, req, "dhcp.manage") {
 		return
@@ -55,7 +62,16 @@ func (r *Router) updateScope(w http.ResponseWriter, req *http.Request) {
 	if strings.TrimSpace(body.State) == "" {
 		body.State = current.State
 	}
+	if err := validateDHCPScopeDefaultGateway(body.Subnet, body.DefaultGateway); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_default_gateway", err.Error())
+		return
+	}
 	normalizeDHCPScopeLeaseDuration(&body)
+	changedFields := dhcpScopeChangedFields(current, body)
+	if len(changedFields) == 0 {
+		writeJSON(w, http.StatusOK, current)
+		return
+	}
 	refreshTarget := dhcpScopeRefreshTarget(server.ID, scopeExternalID, body.Name)
 	finishRefresh := r.refresh.begin(refreshTarget)
 	defer finishRefresh()
@@ -63,7 +79,14 @@ func (r *Router) updateScope(w http.ResponseWriter, req *http.Request) {
 	var agentScope domain.DHCPScope
 	agentCtx, cancel := context.WithTimeout(req.Context(), r.agentOperationTimeout(req.Context()))
 	defer cancel()
-	if err := r.agent.Put(agentCtx, server.AgentURL, server.APIKey, "/dhcp/scopes/"+url.PathEscape(scopeExternalID), body, &agentScope, server.TLSInsecure); err != nil {
+	agentPayload := agentScopeUpdatePayload{
+		DHCPScope:     body,
+		OldStartRange: current.StartRange,
+		OldEndRange:   current.EndRange,
+		ChangedFields: changedFields,
+	}
+	if err := r.agent.Put(agentCtx, server.AgentURL, server.APIKey, "/dhcp/scopes/"+url.PathEscape(scopeExternalID), agentPayload, &agentScope, server.TLSInsecure); err != nil {
+		r.markDHCPScopeDirtyAfterAgentFailure(refreshTarget, err)
 		writeError(w, http.StatusBadGateway, "agent_update_scope_failed", "Agent 更新 DHCP 作用域失败："+err.Error())
 		return
 	}
@@ -83,6 +106,30 @@ func (r *Router) updateScope(w http.ResponseWriter, req *http.Request) {
 	})
 	r.refresh.markDirty(refreshTarget)
 	writeJSON(w, http.StatusOK, body)
+}
+
+func dhcpScopeChangedFields(current, next domain.DHCPScope) []string {
+	var fields []string
+	if strings.TrimSpace(current.Name) != strings.TrimSpace(next.Name) {
+		fields = append(fields, "name")
+	}
+	if strings.TrimSpace(current.Description) != strings.TrimSpace(next.Description) {
+		fields = append(fields, "description")
+	}
+	if strings.TrimSpace(current.DefaultGateway) != strings.TrimSpace(next.DefaultGateway) {
+		fields = append(fields, "gateway")
+	}
+	if current.LeaseDurationSeconds != next.LeaseDurationSeconds {
+		fields = append(fields, "lease")
+	}
+	if strings.TrimSpace(current.StartRange) != strings.TrimSpace(next.StartRange) ||
+		strings.TrimSpace(current.EndRange) != strings.TrimSpace(next.EndRange) {
+		fields = append(fields, "range")
+	}
+	if strings.TrimSpace(current.State) != strings.TrimSpace(next.State) {
+		fields = append(fields, "state")
+	}
+	return fields
 }
 
 func (r *Router) updateReservation(w http.ResponseWriter, req *http.Request) {
@@ -127,6 +174,8 @@ func (r *Router) updateReservation(w http.ResponseWriter, req *http.Request) {
 	newReservation := body
 	newReservation.ID = current.ID
 	newReservation.ScopeID = scopeExternalID
+	newReservation.IP = current.IP
+	newReservation.MAC = current.MAC
 	if strings.TrimSpace(newReservation.ExternalID) == "" {
 		newReservation.ExternalID = newReservation.IP
 	}
@@ -135,13 +184,21 @@ func (r *Router) updateReservation(w http.ResponseWriter, req *http.Request) {
 	agentCtx, cancel := context.WithTimeout(req.Context(), r.agentOperationTimeout(req.Context()))
 	defer cancel()
 	if err := r.agent.Post(agentCtx, server.AgentURL, server.APIKey, "/dhcp/reservations/update", payload, &agentReservation, server.TLSInsecure); err != nil {
+		r.markDHCPScopeDirtyAfterAgentFailure(refreshTarget, err)
 		writeError(w, http.StatusBadGateway, "agent_update_reservation_failed", "Agent 更新 DHCP 保留地址失败："+err.Error())
 		return
 	}
 	newReservation.ScopeID = scope.ID
-	if updated, err := r.store.UpdateReservation(req.Context(), newReservation); err == nil {
-		newReservation = updated
+	updated, err := r.store.UpdateReservation(req.Context(), newReservation)
+	if err != nil {
+		writeError(w, statusFromErr(err), "update_reservation_failed", "更新 DHCP 保留地址快照失败")
+		return
 	}
+	if err := r.store.UpdateLeaseHostnameByScopeIP(req.Context(), scope.ID, updated.IP, updated.Name); err != nil {
+		writeError(w, http.StatusInternalServerError, "update_lease_snapshot_failed", "更新 DHCP 租约快照失败")
+		return
+	}
+	newReservation = updated
 	r.writeAudit(req, "Updated DHCP reservation", newReservation.IP, "DHCP", "success", map[string]any{
 		"scope":  scope.Name,
 		"oldIp":  current.IP,

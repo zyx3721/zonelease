@@ -8,7 +8,7 @@ $script:instanceMutex = $null
 $script:jsonSerializer = $null
 $script:logLock = New-Object System.Object
 $script:reservationCacheLock = New-Object System.Object
-$script:reservationCache = [hashtable]::Synchronized(@{ loaded = $false; byScope = @{}; rangeByScope = @{}; exclusionsByScope = @{} })
+$script:reservationCache = [hashtable]::Synchronized(@{ loaded = $false; byScope = @{}; rangeByScope = @{}; exclusionsByScope = @{}; metadataByScope = @{}; stateByScope = @{} })
 
 function Enter-SingleInstance {
   param([string]$Name)
@@ -40,7 +40,6 @@ function New-DefaultAgentSettings {
   Add-Member -InputObject $settings -MemberType NoteProperty -Name apiKey -Value ""
   Add-Member -InputObject $settings -MemberType NoteProperty -Name allowAnonymous -Value $false
   Add-Member -InputObject $settings -MemberType NoteProperty -Name logPath -Value "C:\ProgramData\ZoneLease\dhcp-agent-legacy.log"
-  Add-Member -InputObject $settings -MemberType NoteProperty -Name requestConcurrency -Value 5
   return $settings
 }
 
@@ -80,8 +79,6 @@ function Read-AgentSettings {
   $settings.apiKey = Get-JsonStringValue -Raw $raw -Name "apiKey" -DefaultValue $settings.apiKey
   $settings.allowAnonymous = Get-JsonBoolValue -Raw $raw -Name "allowAnonymous" -DefaultValue $settings.allowAnonymous
   $settings.logPath = Get-JsonStringValue -Raw $raw -Name "logPath" -DefaultValue $settings.logPath
-  $settings.requestConcurrency = Get-JsonIntValue -Raw $raw -Name "requestConcurrency" -DefaultValue $settings.requestConcurrency
-  $settings.requestConcurrency = ConvertTo-AgentIntRange -Value ([string]$settings.requestConcurrency) -DefaultValue 5 -MinValue 1 -MaxValue 50
   return $settings
 }
 
@@ -137,7 +134,6 @@ function Read-DotEnvAgentSettings {
       "DHCP_AGENT_API_KEY" { $settings.apiKey = $value }
       "DHCP_AGENT_ALLOW_ANONYMOUS" { $settings.allowAnonymous = ConvertTo-AgentBool -Value $value -DefaultValue $settings.allowAnonymous }
       "DHCP_AGENT_LOG_PATH" { if (-not (Test-BlankString $value)) { $settings.logPath = $value } }
-      "DHCP_AGENT_LEGACY_REQUEST_CONCURRENCY" { $settings.requestConcurrency = ConvertTo-AgentIntRange -Value $value -DefaultValue $settings.requestConcurrency -MinValue 1 -MaxValue 50 }
     }
   }
   return $settings
@@ -190,7 +186,12 @@ function Read-JsonBody {
   param([System.Net.HttpListenerRequest]$Request)
   if (-not $Request.HasEntityBody) { return $null }
 
-  $reader = New-Object System.IO.StreamReader($Request.InputStream, $Request.ContentEncoding)
+  $encoding = [System.Text.Encoding]::UTF8
+  $contentType = [string]$Request.ContentType
+  if ($contentType -match '(?i)charset=([^;\s]+)') {
+    try { $encoding = [System.Text.Encoding]::GetEncoding($matches[1].Trim('"')) } catch { $encoding = [System.Text.Encoding]::UTF8 }
+  }
+  $reader = New-Object System.IO.StreamReader($Request.InputStream, $encoding)
   try {
     $raw = $reader.ReadToEnd()
   }
@@ -224,6 +225,16 @@ function Get-MapValue {
   }
   catch {}
   return $DefaultValue
+}
+
+function Test-ChangedField {
+  param([object]$Body, [string]$Name)
+  $fields = Get-MapValue -Map $Body -Name "changedFields" -DefaultValue $null
+  if ($null -eq $fields) { return $true }
+  foreach ($field in @($fields)) {
+    if ([string]$field -eq $Name) { return $true }
+  }
+  return $false
 }
 
 function UrlDecode {
@@ -384,6 +395,38 @@ function Get-NetshDhcp {
   return Invoke-Netsh -Arguments $args
 }
 
+function Quote-NetshArgument {
+  param([string]$Value)
+  if ($null -eq $Value) { return '""' }
+  $text = [string]$Value
+  if ($text.Length -eq 0) { return '""' }
+  if ($text -notmatch '[\s"]') { return $text }
+  return '"' + $text.Replace('"', '\"') + '"'
+}
+
+function Invoke-NetshDhcpBatch {
+  param([object[]]$Commands)
+  if ($null -eq $Commands -or $Commands.Count -eq 0) { return "" }
+  $lines = @("dhcp server")
+  foreach ($command in @($Commands)) {
+    $parts = @()
+    foreach ($part in @($command)) {
+      $parts += (Quote-NetshArgument ([string]$part))
+    }
+    if ($parts.Count -gt 0) {
+      $lines += ([string]::Join(" ", $parts))
+    }
+  }
+  $scriptPath = [System.IO.Path]::GetTempFileName()
+  try {
+    [System.IO.File]::WriteAllText($scriptPath, [string]::Join("`r`n", $lines), [System.Text.Encoding]::Default)
+    return Invoke-Netsh -Arguments @("-f", $scriptPath)
+  }
+  finally {
+    try { Remove-Item -LiteralPath $scriptPath -Force } catch {}
+  }
+}
+
 function Test-DhcpProbe {
   [void](Get-NetshDhcp -Arguments @("show", "server"))
 }
@@ -432,7 +475,16 @@ function Test-NeverExpiresText {
   param([string]$Value)
   if (Test-BlankString $Value) { return $false }
   $text = $Value.Trim().ToLowerInvariant()
-  return (($text -match "永不过期") -or ($text -match "never") -or ($text -match "infinite") -or ($text -match "no expiration"))
+  $zhNeverExpires = ([string]([char]0x6C38) + [string]([char]0x4E0D) + [string]([char]0x8FC7) + [string]([char]0x671F))
+  return (($text.IndexOf($zhNeverExpires) -ge 0) -or ($text -match "never") -or ($text -match "infinite") -or ($text -match "no expiration"))
+}
+
+function Test-InactiveReservationText {
+  param([string]$Value)
+  if (Test-BlankString $Value) { return $false }
+  $text = $Value.Trim().ToLowerInvariant()
+  $zhInactive = ([string]([char]0x4E0D) + [string]([char]0x6D3B) + [string]([char]0x52A8))
+  return (($text.IndexOf($zhInactive) -ge 0) -or ($text -match "inactive"))
 }
 
 function Get-QuotedValues {
@@ -456,7 +508,14 @@ function Read-DhcpLeaseTail {
     $prefix = $text.Substring(0, $marker.Index).Trim()
     if (Test-DateLikeText $prefix) { $result.ExpiresAt = Convert-DateToIso $prefix }
     $result.Type = $marker.Groups[2].Value.Trim("-")
-    if (Test-NeverExpiresText $prefix) { $result.Type = "ReservedActive" }
+    if (Test-NeverExpiresText $prefix) {
+      $result.Type = "ReservedActive"
+      $result.ExpiresAt = "never"
+    }
+    if (Test-InactiveReservationText $prefix) {
+      $result.Type = "ReservedInactive"
+      $result.ExpiresAt = "never"
+    }
     $result.Name = $text.Substring($marker.Index + $marker.Length).Trim()
     return $result
   }
@@ -471,6 +530,12 @@ function Read-DhcpLeaseTail {
     }
     if (Test-NeverExpiresText $value) {
       $result.Type = "ReservedActive"
+      $result.ExpiresAt = "never"
+      continue
+    }
+    if (Test-InactiveReservationText $value) {
+      $result.Type = "ReservedInactive"
+      $result.ExpiresAt = "never"
       continue
     }
     if ((Test-BlankString $result.Type) -and (Test-DhcpLeaseTypeText $value)) {
@@ -563,6 +628,117 @@ function Get-DhcpExclusionsFromDumpText {
   return $items
 }
 
+function Get-DhcpScopeMetadataFromDumpText {
+  param([string]$Dump)
+  $items = @{}
+  foreach ($line in $Dump -split "`n") {
+    $text = $line.Trim()
+    if (Test-BlankString $text) { continue }
+    if (-not [Regex]::IsMatch($text, '(?i)\badd\s+scope\b')) { continue }
+    $match = [Regex]::Match($text, '(?i)\badd\s+scope\s+(\d{1,3}(?:\.\d{1,3}){3})\s+(\d{1,3}(?:\.\d{1,3}){3})\s*(.*)$')
+    if (-not $match.Success) { continue }
+    $scopeId = $match.Groups[1].Value
+    $mask = $match.Groups[2].Value
+    $quotes = @(Get-QuotedValues -Text $match.Groups[3].Value)
+    $name = ""
+    $description = ""
+    if ($quotes.Length -ge 1) { $name = $quotes[0] }
+    if ($quotes.Length -ge 2) { $description = $quotes[1] }
+    $items[$scopeId] = @{ Mask = $mask; Name = $name; Description = $description }
+  }
+  return $items
+}
+
+function Get-DhcpScopeStatesFromDumpText {
+  param([string]$Dump)
+  $items = @{}
+  foreach ($line in $Dump -split "`n") {
+    $text = $line.Trim()
+    if (Test-BlankString $text) { continue }
+    $match = [Regex]::Match($text, '(?i)\bscope\s+(\d{1,3}(?:\.\d{1,3}){3})\s+set\s+state\s+(-?\d+)')
+    if (-not $match.Success) { continue }
+    $stateValue = $match.Groups[2].Value
+    if ($stateValue -eq "0") {
+      $items[$match.Groups[1].Value] = "Inactive"
+    }
+    else {
+      $items[$match.Groups[1].Value] = "Active"
+    }
+  }
+  return $items
+}
+
+function Get-DhcpDefaultGatewaysFromDumpText {
+  param([string]$Dump)
+  $items = @{}
+  foreach ($line in $Dump -split "`n") {
+    $text = $line.Trim()
+    if (Test-BlankString $text) { continue }
+    if ($text.ToLowerInvariant().IndexOf("optionvalue 3") -lt 0) { continue }
+    $match = [Regex]::Match($text, '(?i)\bscope\s+(\d{1,3}(?:\.\d{1,3}){3})\b.*\boptionvalue\s+3\s+IPADDRESS\s+"?(\d{1,3}(?:\.\d{1,3}){3})"?')
+    if (-not $match.Success) { continue }
+    $items[$match.Groups[1].Value] = $match.Groups[2].Value
+  }
+  return $items
+}
+
+function New-DhcpScopeFromDumpData {
+  param(
+    [string]$ScopeId,
+    [hashtable]$MetadataByScope,
+    [hashtable]$RangeByScope,
+    [hashtable]$LeaseDurations,
+    [hashtable]$StateByScope,
+    [hashtable]$DefaultGateways
+  )
+  if (Test-BlankString $ScopeId) { return $null }
+  $mask = "255.255.255.0"
+  $name = $ScopeId
+  $description = ""
+  if ($MetadataByScope -ne $null -and $MetadataByScope.ContainsKey($ScopeId)) {
+    $metadata = $MetadataByScope[$ScopeId]
+    if (-not (Test-BlankString $metadata.Mask)) { $mask = [string]$metadata.Mask }
+    if (-not (Test-BlankString $metadata.Name)) { $name = [string]$metadata.Name }
+    $description = [string]$metadata.Description
+  }
+  $startRange = ""
+  $endRange = ""
+  if ($RangeByScope -ne $null -and $RangeByScope.ContainsKey($ScopeId)) {
+    $startRange = [string]$RangeByScope[$ScopeId].Start
+    $endRange = [string]$RangeByScope[$ScopeId].End
+  }
+  $leaseSeconds = 86400
+  if ($LeaseDurations -ne $null -and $LeaseDurations.ContainsKey($ScopeId)) {
+    $leaseSeconds = [int]$LeaseDurations[$ScopeId]
+  }
+  $leaseHours = 0
+  if ($leaseSeconds -gt 0) {
+    $leaseHours = [int][Math]::Ceiling($leaseSeconds / 3600)
+    if ($leaseHours -lt 1) { $leaseHours = 1 }
+  }
+  $state = "Active"
+  if ($StateByScope -ne $null -and $StateByScope.ContainsKey($ScopeId)) {
+    $state = [string]$StateByScope[$ScopeId]
+  }
+  $defaultGateway = ""
+  if ($DefaultGateways -ne $null -and $DefaultGateways.ContainsKey($ScopeId)) {
+    $defaultGateway = [string]$DefaultGateways[$ScopeId]
+  }
+  return @{
+    id = $ScopeId
+    name = $name
+    description = $description
+    subnet = ($ScopeId + "/" + (Convert-MaskToPrefix -Mask $mask))
+    defaultGateway = $defaultGateway
+    startRange = $startRange
+    endRange = $endRange
+    leaseDurationHours = $leaseHours
+    leaseDurationSeconds = $leaseSeconds
+    state = $state
+    serverId = "local"
+  }
+}
+
 function Group-DhcpReservationsByScope {
   param([object[]]$Reservations)
   $byScope = @{}
@@ -594,6 +770,9 @@ function Clear-DhcpReservationCache {
     $script:reservationCache["byScope"] = @{}
     $script:reservationCache["rangeByScope"] = @{}
     $script:reservationCache["exclusionsByScope"] = @{}
+    $script:reservationCache["metadataByScope"] = @{}
+    $script:reservationCache["stateByScope"] = @{}
+    $script:reservationCache["defaultGatewayByScope"] = @{}
   }
   finally {
     [System.Threading.Monitor]::Exit($script:reservationCacheLock)
@@ -610,9 +789,15 @@ function Get-DhcpReservationCacheByScope {
     $byScope = Group-DhcpReservationsByScope -Reservations @(Get-DhcpReservationsFromDumpText -Dump $dump -DefaultScopeId "")
     $rangeByScope = Get-DhcpScopeRangesFromDumpText -Dump $dump -DefaultScopeId ""
     $exclusionsByScope = Group-DhcpExclusionsByScope -Exclusions @(Get-DhcpExclusionsFromDumpText -Dump $dump -DefaultScopeId "")
+    $metadataByScope = Get-DhcpScopeMetadataFromDumpText -Dump $dump
+    $stateByScope = Get-DhcpScopeStatesFromDumpText -Dump $dump
+    $defaultGatewayByScope = Get-DhcpDefaultGatewaysFromDumpText -Dump $dump
     $script:reservationCache["byScope"] = $byScope
     $script:reservationCache["rangeByScope"] = $rangeByScope
     $script:reservationCache["exclusionsByScope"] = $exclusionsByScope
+    $script:reservationCache["metadataByScope"] = $metadataByScope
+    $script:reservationCache["stateByScope"] = $stateByScope
+    $script:reservationCache["defaultGatewayByScope"] = $defaultGatewayByScope
     $script:reservationCache["loaded"] = $true
     return $byScope
   }
@@ -644,11 +829,17 @@ function Get-DhcpLeaseDurationMap {
     $byScope = Group-DhcpReservationsByScope -Reservations @(Get-DhcpReservationsFromDumpText -Dump $dump -DefaultScopeId "")
     $rangeByScope = Get-DhcpScopeRangesFromDumpText -Dump $dump -DefaultScopeId ""
     $exclusionsByScope = Group-DhcpExclusionsByScope -Exclusions @(Get-DhcpExclusionsFromDumpText -Dump $dump -DefaultScopeId "")
+    $metadataByScope = Get-DhcpScopeMetadataFromDumpText -Dump $dump
+    $stateByScope = Get-DhcpScopeStatesFromDumpText -Dump $dump
+    $defaultGatewayByScope = Get-DhcpDefaultGatewaysFromDumpText -Dump $dump
     [System.Threading.Monitor]::Enter($script:reservationCacheLock)
     try {
       $script:reservationCache["byScope"] = $byScope
       $script:reservationCache["rangeByScope"] = $rangeByScope
       $script:reservationCache["exclusionsByScope"] = $exclusionsByScope
+      $script:reservationCache["metadataByScope"] = $metadataByScope
+      $script:reservationCache["stateByScope"] = $stateByScope
+      $script:reservationCache["defaultGatewayByScope"] = $defaultGatewayByScope
       $script:reservationCache["loaded"] = $true
     }
     finally {
@@ -784,26 +975,6 @@ function Parse-DhcpScopeLine {
   return $null
 }
 
-function Get-DhcpScopeRange {
-  param([string]$ScopeId)
-  $range = @{ Start = ""; End = "" }
-  try {
-    $raw = Get-NetshDhcp -Arguments @("scope", $ScopeId, "show", "iprange")
-    foreach ($line in $raw -split "`n") {
-      $text = $line.Trim()
-      if ($text.ToLowerInvariant().IndexOf("iprange") -lt 0) { continue }
-      $match = [Regex]::Match($text, '(?i)\biprange\s+(\d{1,3}(?:\.\d{1,3}){3})\s+(\d{1,3}(?:\.\d{1,3}){3})\b')
-      if ($match.Success) {
-        $range.Start = $match.Groups[1].Value
-        $range.End = $match.Groups[2].Value
-        return $range
-      }
-    }
-  }
-  catch {}
-  return $range
-}
-
 function Get-DhcpScopes {
   return Get-DhcpScopesInternal -IncludeDetails $true
 }
@@ -812,74 +983,96 @@ function Get-DhcpScopesLight {
   return Get-DhcpScopesInternal -IncludeDetails $false
 }
 
+function Get-DhcpScopeFromScopeDump {
+  param([string]$ScopeId)
+  if (Test-BlankString $ScopeId) { return $null }
+  $dump = Get-NetshDhcp -Arguments @("scope", $ScopeId, "dump")
+  $metadataByScope = Get-DhcpScopeMetadataFromDumpText -Dump $dump
+  $rangeByScope = Get-DhcpScopeRangesFromDumpText -Dump $dump -DefaultScopeId $ScopeId
+  $leaseDurations = Get-DhcpLeaseDurationsFromDumpText -Dump $dump
+  $stateByScope = Get-DhcpScopeStatesFromDumpText -Dump $dump
+  $defaultGatewayByScope = Get-DhcpDefaultGatewaysFromDumpText -Dump $dump
+  $hasScopeData = $false
+  if ($metadataByScope -ne $null -and $metadataByScope.ContainsKey($ScopeId)) { $hasScopeData = $true }
+  if ($rangeByScope -ne $null -and $rangeByScope.ContainsKey($ScopeId)) { $hasScopeData = $true }
+  if ($leaseDurations -ne $null -and $leaseDurations.ContainsKey($ScopeId)) { $hasScopeData = $true }
+  if ($stateByScope -ne $null -and $stateByScope.ContainsKey($ScopeId)) { $hasScopeData = $true }
+  if ($defaultGatewayByScope -ne $null -and $defaultGatewayByScope.ContainsKey($ScopeId)) { $hasScopeData = $true }
+  if (-not $hasScopeData) { throw "scope not found" }
+  $byScope = Group-DhcpReservationsByScope -Reservations @(Get-DhcpReservationsFromDumpText -Dump $dump -DefaultScopeId $ScopeId)
+  $exclusionsByScope = Group-DhcpExclusionsByScope -Exclusions @(Get-DhcpExclusionsFromDumpText -Dump $dump -DefaultScopeId $ScopeId)
+  [System.Threading.Monitor]::Enter($script:reservationCacheLock)
+  try {
+    $script:reservationCache["byScope"] = $byScope
+    $script:reservationCache["rangeByScope"] = $rangeByScope
+    $script:reservationCache["exclusionsByScope"] = $exclusionsByScope
+    $script:reservationCache["metadataByScope"] = $metadataByScope
+    $script:reservationCache["stateByScope"] = $stateByScope
+    $script:reservationCache["defaultGatewayByScope"] = $defaultGatewayByScope
+    $script:reservationCache["loaded"] = $true
+  }
+  finally {
+    [System.Threading.Monitor]::Exit($script:reservationCacheLock)
+  }
+  $scope = New-DhcpScopeFromDumpData -ScopeId $ScopeId -MetadataByScope $metadataByScope -RangeByScope $rangeByScope -LeaseDurations $leaseDurations -StateByScope $stateByScope -DefaultGateways $defaultGatewayByScope
+  if ($null -eq $scope) { throw "scope not found" }
+  return $scope
+}
+
 function Get-DhcpScopesInternal {
   param([bool]$IncludeDetails)
   Write-DhcpTrace -Message ("dhcp scopes start includeDetails=" + $IncludeDetails)
-  $raw = Get-NetshDhcp -Arguments @("show", "scope")
   $leaseDurations = Get-DhcpLeaseDurationMap
   $rangeByScope = @{}
+  $metadataByScope = @{}
+  $stateByScope = @{}
+  $defaultGatewayByScope = @{}
   [System.Threading.Monitor]::Enter($script:reservationCacheLock)
   try {
     if ($script:reservationCache.ContainsKey("rangeByScope")) {
       $rangeByScope = $script:reservationCache["rangeByScope"]
+    }
+    if ($script:reservationCache.ContainsKey("metadataByScope")) {
+      $metadataByScope = $script:reservationCache["metadataByScope"]
+    }
+    if ($script:reservationCache.ContainsKey("stateByScope")) {
+      $stateByScope = $script:reservationCache["stateByScope"]
+    }
+    if ($script:reservationCache.ContainsKey("defaultGatewayByScope")) {
+      $defaultGatewayByScope = $script:reservationCache["defaultGatewayByScope"]
     }
   }
   finally {
     [System.Threading.Monitor]::Exit($script:reservationCacheLock)
   }
   $items = @()
-  foreach ($line in $raw -split "`n") {
-    $text = $line.Trim()
-    if (Test-BlankString $text) { continue }
-    $parsed = Parse-DhcpScopeLine -Text $text
-    if ($null -eq $parsed) { continue }
-    $scopeId = $parsed.ScopeId
-    $mask = $parsed.Mask
-    $name = $parsed.Name
-    $description = $parsed.Description
-    $state = $parsed.State
-
-    $startRange = ""
-    $endRange = ""
-    if ($rangeByScope -ne $null -and $rangeByScope.ContainsKey($scopeId)) {
-      $startRange = [string]$rangeByScope[$scopeId].Start
-      $endRange = [string]$rangeByScope[$scopeId].End
+  $scopeIds = @()
+  if ($metadataByScope -ne $null) {
+    foreach ($scopeId in $metadataByScope.Keys) { $scopeIds += [string]$scopeId }
+  }
+  if ($stateByScope -ne $null) {
+    foreach ($scopeId in $stateByScope.Keys) {
+      if (-not ($scopeIds -contains [string]$scopeId)) { $scopeIds += [string]$scopeId }
     }
-    $leaseSeconds = 86400
-    if ($leaseDurations.ContainsKey($scopeId)) {
-      $leaseSeconds = [int]$leaseDurations[$scopeId]
+  }
+  if ($rangeByScope -ne $null) {
+    foreach ($scopeId in $rangeByScope.Keys) {
+      if (-not ($scopeIds -contains [string]$scopeId)) { $scopeIds += [string]$scopeId }
     }
-    $leaseHours = 0
-    if ($leaseSeconds -gt 0) {
-      $leaseHours = [int][Math]::Ceiling($leaseSeconds / 3600)
-      if ($leaseHours -lt 1) { $leaseHours = 1 }
+  }
+  if ($leaseDurations -ne $null) {
+    foreach ($scopeId in $leaseDurations.Keys) {
+      if (-not ($scopeIds -contains [string]$scopeId)) { $scopeIds += [string]$scopeId }
     }
-    if ($IncludeDetails) {
-      try {
-        $details = Get-NetshDhcp -Arguments @("scope", $scopeId, "show", "scope")
-        $startRange = Get-ScopeOptionValue -Details $details -Names @("Start IP Address", "Start Range", "Start")
-        $endRange = Get-ScopeOptionValue -Details $details -Names @("End IP Address", "End Range", "End")
-        if ((Test-BlankString $startRange) -or (Test-BlankString $endRange)) {
-          $range = Get-DhcpScopeRange -ScopeId $scopeId
-          if (Test-BlankString $startRange) { $startRange = $range.Start }
-          if (Test-BlankString $endRange) { $endRange = $range.End }
-        }
-      }
-      catch {}
+  }
+  if ($defaultGatewayByScope -ne $null) {
+    foreach ($scopeId in $defaultGatewayByScope.Keys) {
+      if (-not ($scopeIds -contains [string]$scopeId)) { $scopeIds += [string]$scopeId }
     }
-
-    $items += @{
-      id = $scopeId
-      name = $name
-      description = $description
-      subnet = ($scopeId + "/" + (Convert-MaskToPrefix -Mask $mask))
-      startRange = $startRange
-      endRange = $endRange
-      leaseDurationHours = $leaseHours
-      leaseDurationSeconds = $leaseSeconds
-      state = $state
-      serverId = "local"
-    }
+  }
+  foreach ($scopeId in ($scopeIds | Sort-Object)) {
+    $scope = New-DhcpScopeFromDumpData -ScopeId $scopeId -MetadataByScope $metadataByScope -RangeByScope $rangeByScope -LeaseDurations $leaseDurations -StateByScope $stateByScope -DefaultGateways $defaultGatewayByScope
+    if ($null -ne $scope) { $items += $scope }
   }
   Write-DhcpTrace -Message ("dhcp scopes done includeDetails=" + $IncludeDetails + " count=" + $items.Count)
   return $items
@@ -892,6 +1085,7 @@ function Json-Scope {
     (Json-String "name") + ":" + (Json-String $Scope.name) + "," +
     (Json-String "description") + ":" + (Json-String $Scope.description) + "," +
     (Json-String "subnet") + ":" + (Json-String $Scope.subnet) + "," +
+    (Json-String "defaultGateway") + ":" + (Json-String $Scope.defaultGateway) + "," +
     (Json-String "startRange") + ":" + (Json-String $Scope.startRange) + "," +
     (Json-String "endRange") + ":" + (Json-String $Scope.endRange) + "," +
     (Json-String "leaseDurationHours") + ":" + ([int]$Scope.leaseDurationHours) + "," +
@@ -916,12 +1110,15 @@ function Json-Scopes {
 function Create-DhcpScope {
   param([object]$Body)
   $name = [string](Get-MapValue -Map $Body -Name "name" -DefaultValue "")
+  $description = [string](Get-MapValue -Map $Body -Name "description" -DefaultValue "")
   $subnet = [string](Get-MapValue -Map $Body -Name "subnet" -DefaultValue "")
+  $defaultGateway = [string](Get-MapValue -Map $Body -Name "defaultGateway" -DefaultValue "")
   $startRange = [string](Get-MapValue -Map $Body -Name "startRange" -DefaultValue "")
   $endRange = [string](Get-MapValue -Map $Body -Name "endRange" -DefaultValue "")
   $leaseHours = [int](Get-MapValue -Map $Body -Name "leaseDurationHours" -DefaultValue 24)
   $leaseSeconds = [int](Get-MapValue -Map $Body -Name "leaseDurationSeconds" -DefaultValue 0)
   if (Test-BlankString $name) { throw "scope name is required" }
+  if (Test-BlankString $defaultGateway) { throw "default gateway is required" }
   if (Test-BlankString $startRange) { throw "scope start range is required" }
   if (Test-BlankString $endRange) { throw "scope end range is required" }
   if ($leaseSeconds -ne -1) {
@@ -930,21 +1127,33 @@ function Create-DhcpScope {
       $leaseSeconds = $leaseHours * 3600
     }
   }
+  $leaseOptionValue = [string]$leaseSeconds
+  if ($leaseSeconds -eq -1) { $leaseOptionValue = "4294967295" }
   $parsed = Parse-Subnet -Subnet $subnet
-  [void](Get-NetshDhcp -Arguments @("add", "scope", $parsed.ScopeId, $parsed.Mask, $name))
-  [void](Get-NetshDhcp -Arguments @("scope", $parsed.ScopeId, "add", "iprange", $startRange, $endRange))
-  try { [void](Get-NetshDhcp -Arguments @("scope", $parsed.ScopeId, "set", "state", "1")) } catch {}
-  try { [void](Get-NetshDhcp -Arguments @("scope", $parsed.ScopeId, "set", "optionvalue", "51", "DWORD", ([string]$leaseSeconds))) } catch {}
+  $commands = @()
+  $commands += ,@("add", "scope", $parsed.ScopeId, $parsed.Mask, $name)
+  if (-not (Test-BlankString $description)) {
+    $commands += ,@("scope", $parsed.ScopeId, "set", "comment", $description)
+  }
+  $commands += ,@("scope", $parsed.ScopeId, "add", "iprange", $startRange, $endRange)
+  $commands += ,@("scope", $parsed.ScopeId, "set", "state", "1")
+  $commands += ,@("scope", $parsed.ScopeId, "set", "optionvalue", "51", "DWORD", $leaseOptionValue)
+  $commands += ,@("scope", $parsed.ScopeId, "set", "optionvalue", "3", "IPADDRESS", $defaultGateway)
+  [void](Invoke-NetshDhcpBatch -Commands $commands)
 }
 
 function Update-DhcpScope {
   param([string]$ScopeId, [object]$Body)
   $name = [string](Get-MapValue -Map $Body -Name "name" -DefaultValue "")
+  $description = [string](Get-MapValue -Map $Body -Name "description" -DefaultValue "")
+  $defaultGateway = [string](Get-MapValue -Map $Body -Name "defaultGateway" -DefaultValue "")
   $leaseHours = [int](Get-MapValue -Map $Body -Name "leaseDurationHours" -DefaultValue 24)
   $leaseSeconds = [int](Get-MapValue -Map $Body -Name "leaseDurationSeconds" -DefaultValue 0)
   $state = [string](Get-MapValue -Map $Body -Name "state" -DefaultValue "Active")
   $startRange = [string](Get-MapValue -Map $Body -Name "startRange" -DefaultValue "")
   $endRange = [string](Get-MapValue -Map $Body -Name "endRange" -DefaultValue "")
+  $oldStartRange = [string](Get-MapValue -Map $Body -Name "oldStartRange" -DefaultValue "")
+  $oldEndRange = [string](Get-MapValue -Map $Body -Name "oldEndRange" -DefaultValue "")
   if (Test-BlankString $ScopeId) { throw "scope id is required" }
   if (Test-BlankString $name) { throw "scope name is required" }
   if ($leaseSeconds -ne -1) {
@@ -953,22 +1162,41 @@ function Update-DhcpScope {
       $leaseSeconds = $leaseHours * 3600
     }
   }
-  try { [void](Get-NetshDhcp -Arguments @("scope", $ScopeId, "set", "name", $name)) } catch {}
-  try { [void](Get-NetshDhcp -Arguments @("scope", $ScopeId, "set", "optionvalue", "51", "DWORD", ([string]$leaseSeconds))) } catch {}
-  if ((-not (Test-BlankString $startRange)) -and (-not (Test-BlankString $endRange))) {
-    $oldRange = Get-DhcpScopeRange -ScopeId $ScopeId
-    if ($oldRange.Start -ne $startRange -or $oldRange.End -ne $endRange) {
-      [void](Get-NetshDhcp -Arguments @("scope", $ScopeId, "add", "iprange", $startRange, $endRange))
-      if ((-not (Test-BlankString $oldRange.Start)) -and (-not (Test-BlankString $oldRange.End))) {
-        try { [void](Get-NetshDhcp -Arguments @("scope", $ScopeId, "delete", "iprange", $oldRange.Start, $oldRange.End)) } catch {}
-      }
+  $leaseOptionValue = [string]$leaseSeconds
+  if ($leaseSeconds -eq -1) { $leaseOptionValue = "4294967295" }
+  $commands = @()
+  if (Test-ChangedField -Body $Body -Name "name") {
+    $commands += ,@("scope", $ScopeId, "set", "name", $name)
+  }
+  if (Test-ChangedField -Body $Body -Name "description") {
+    $commands += ,@("scope", $ScopeId, "set", "comment", $description)
+  }
+  if (Test-ChangedField -Body $Body -Name "gateway") {
+    if (Test-BlankString $defaultGateway) { throw "default gateway is required" }
+    $commands += ,@("scope", $ScopeId, "set", "optionvalue", "3", "IPADDRESS", $defaultGateway)
+  }
+  if (Test-ChangedField -Body $Body -Name "lease") {
+    $commands += ,@("scope", $ScopeId, "set", "optionvalue", "51", "DWORD", $leaseOptionValue)
+  }
+  if ((Test-ChangedField -Body $Body -Name "range") -and (-not (Test-BlankString $startRange)) -and (-not (Test-BlankString $endRange))) {
+    if ($oldStartRange -ne $startRange -or $oldEndRange -ne $endRange) {
+      $commands += ,@("scope", $ScopeId, "add", "iprange", $startRange, $endRange)
     }
   }
-  Set-DhcpScopeState -ScopeId $ScopeId -Active ($state -eq "Active")
+  if (Test-ChangedField -Body $Body -Name "state") {
+    $stateValue = "0"
+    if ($state -eq "Active") { $stateValue = "1" }
+    $commands += ,@("scope", $ScopeId, "set", "state", $stateValue)
+  }
+  if ($commands.Count -gt 0) {
+    [void](Invoke-NetshDhcpBatch -Commands $commands)
+  }
   $result = @{
     id = $ScopeId
     name = $name
+    description = $description
     subnet = [string](Get-MapValue -Map $Body -Name "subnet" -DefaultValue $ScopeId)
+    defaultGateway = $defaultGateway
     startRange = $startRange
     endRange = $endRange
     leaseDurationHours = $leaseHours
@@ -1188,12 +1416,16 @@ function Get-ScopeDetailFunctionNames {
     "Test-DhcpLeaseTypeText",
     "Test-DateLikeText",
     "Test-NeverExpiresText",
+    "Test-InactiveReservationText",
     "Get-QuotedValues",
     "Read-DhcpLeaseTail",
     "Get-DhcpReservationScopeFromLine",
     "Get-DhcpReservationsFromDumpText",
     "Get-DhcpScopeRangesFromDumpText",
     "Get-DhcpExclusionsFromDumpText",
+    "Get-DhcpScopeMetadataFromDumpText",
+    "Get-DhcpScopeStatesFromDumpText",
+    "Get-DhcpDefaultGatewaysFromDumpText",
     "Group-DhcpReservationsByScope",
     "Group-DhcpExclusionsByScope",
     "Clear-DhcpReservationCache",
@@ -1252,27 +1484,9 @@ function Receive-DhcpScopeDetailTask {
 function Json-ScopeDetails {
   param([string]$ScopeId)
   Write-DhcpTrace -Message ("dhcp scope details start scope=" + $ScopeId)
-  $detailPool = New-DhcpScopeDetailRunspacePool
-  $exclusionsJson = "[]"
-  $leasesJson = "[]"
-  $reservationsJson = "[]"
-  try {
-    $tasks = @(
-      (Start-DhcpScopeDetailTask -Pool $detailPool -Kind "exclusions" -ScopeId $ScopeId),
-      (Start-DhcpScopeDetailTask -Pool $detailPool -Kind "leases" -ScopeId $ScopeId),
-      (Start-DhcpScopeDetailTask -Pool $detailPool -Kind "reservations" -ScopeId $ScopeId)
-    )
-    foreach ($task in $tasks) {
-      $result = Receive-DhcpScopeDetailTask -Task $task
-      if ($result.Kind -eq "exclusions") { $exclusionsJson = $result.Json }
-      if ($result.Kind -eq "leases") { $leasesJson = $result.Json }
-      if ($result.Kind -eq "reservations") { $reservationsJson = $result.Json }
-    }
-  }
-  finally {
-    try { $detailPool.Close() } catch {}
-    try { $detailPool.Dispose() } catch {}
-  }
+  $exclusionsJson = Json-Exclusions -Exclusions @(Get-DhcpExclusions -ScopeId $ScopeId)
+  $reservationsJson = Json-Reservations -Reservations @(Get-DhcpReservations -ScopeId $ScopeId)
+  $leasesJson = Json-Leases -Leases @(Get-DhcpLeases -ScopeId $ScopeId)
   Write-DhcpTrace -Message ("dhcp scope details done scope=" + $ScopeId)
   return "{" +
     (Json-String "exclusions") + ":" + $exclusionsJson + "," +
@@ -1372,6 +1586,12 @@ function Invoke-DhcpHttpRequest {
       return
     }
 
+    if ($method -eq "GET" -and $path -match "^/dhcp/scopes/([^/]+)$") {
+      $scopeId = UrlDecode $matches[1]
+      Send-Data -Response $response -RequestId $requestId -DataJson (Json-SingleScope -Scope (Get-DhcpScopeFromScopeDump -ScopeId $scopeId))
+      return
+    }
+
     if ($method -eq "GET" -and $path -match "^/dhcp/scopes/([^/]+)/leases$") {
       $scopeId = UrlDecode $matches[1]
       Send-Data -Response $response -RequestId $requestId -DataJson (Json-Leases -Leases @(Get-DhcpLeases -ScopeId $scopeId))
@@ -1436,7 +1656,7 @@ function Invoke-DhcpHttpRequest {
 
     if ($method -eq "POST" -and $path -eq "/dhcp/reservations/delete") {
       $body = Read-JsonBody -Request $request
-      Delete-DhcpReservation -ScopeId ([string](Get-MapValue -Map $body -Name "scopeId" -DefaultValue "")) -IP ([string](Get-MapValue -Map $body -Name "ip" -DefaultValue ""))
+      Delete-DhcpReservation -ScopeId ([string](Get-MapValue -Map $body -Name "scopeId" -DefaultValue "")) -IP ([string](Get-MapValue -Map $body -Name "ip" -DefaultValue "")) -MAC ([string](Get-MapValue -Map $body -Name "mac" -DefaultValue ""))
       Send-Data -Response $response -RequestId $requestId -DataJson '{"deleted":true}'
       return
     }
@@ -1480,6 +1700,7 @@ function Get-AgentFunctionNames {
     "Json-Bool",
     "Read-JsonBody",
     "Get-MapValue",
+    "Test-ChangedField",
     "UrlDecode",
     "Test-ClientDisconnectedError",
     "Send-Json",
@@ -1490,6 +1711,8 @@ function Get-AgentFunctionNames {
     "Test-NetshAvailable",
     "Invoke-Netsh",
     "Get-NetshDhcp",
+    "Quote-NetshArgument",
+    "Invoke-NetshDhcpBatch",
     "Test-DhcpProbe",
     "ConvertTo-Mac",
     "Normalize-State",
@@ -1497,12 +1720,16 @@ function Get-AgentFunctionNames {
     "Test-DhcpLeaseTypeText",
     "Test-DateLikeText",
     "Test-NeverExpiresText",
+    "Test-InactiveReservationText",
     "Get-QuotedValues",
     "Read-DhcpLeaseTail",
     "Get-DhcpReservationScopeFromLine",
     "Get-DhcpReservationsFromDumpText",
     "Get-DhcpScopeRangesFromDumpText",
     "Get-DhcpExclusionsFromDumpText",
+    "Get-DhcpScopeMetadataFromDumpText",
+    "Get-DhcpScopeStatesFromDumpText",
+    "Get-DhcpDefaultGatewaysFromDumpText",
     "Group-DhcpReservationsByScope",
     "Group-DhcpExclusionsByScope",
     "Clear-DhcpReservationCache",
@@ -1518,9 +1745,10 @@ function Get-AgentFunctionNames {
     "Get-FirstMacMatch",
     "Test-DhcpStateText",
     "Parse-DhcpScopeLine",
-    "Get-DhcpScopeRange",
     "Get-DhcpScopes",
     "Get-DhcpScopesLight",
+    "New-DhcpScopeFromDumpData",
+    "Get-DhcpScopeFromScopeDump",
     "Get-DhcpScopesInternal",
     "Json-Scope",
     "Json-SingleScope",
@@ -1608,14 +1836,6 @@ function Wait-DhcpRequestWorkers {
   }
 }
 
-function Wait-DhcpRequestWorkerSlot {
-  param([System.Collections.ArrayList]$Workers, [int]$Limit, [string]$LogPath)
-  while ($Workers.Count -ge $Limit) {
-    Clear-CompletedDhcpRequestWorkers -Workers $Workers -LogPath $LogPath
-    if ($Workers.Count -ge $Limit) { Start-Sleep -Milliseconds 100 }
-  }
-}
-
 function Create-DhcpReservation {
   param([object]$Body)
   $scopeId = [string](Get-MapValue -Map $Body -Name "scopeId" -DefaultValue "")
@@ -1626,7 +1846,6 @@ function Create-DhcpReservation {
   if (Test-BlankString $scopeId) { throw "scope id is required" }
   if (Test-BlankString $ip) { throw "reservation ip is required" }
   if (Test-BlankString $mac) { throw "reservation mac is required" }
-  if (Test-BlankString $name) { $name = $ip }
   [void](Get-NetshDhcp -Arguments @("scope", $scopeId, "add", "reservedip", $ip, $mac, $name, $description))
   Clear-DhcpReservationCache
   return @{
@@ -1640,8 +1859,14 @@ function Create-DhcpReservation {
 }
 
 function Delete-DhcpReservation {
-  param([string]$ScopeId, [string]$IP)
-  [void](Get-NetshDhcp -Arguments @("scope", $ScopeId, "delete", "reservedip", $IP))
+  param([string]$ScopeId, [string]$IP, [string]$MAC)
+  if (Test-BlankString $ScopeId) { throw "reservation scope id is required" }
+  if (Test-BlankString $IP) { throw "reservation ip is required" }
+  $mac = ConvertTo-Mac $MAC
+  if (Test-BlankString $mac) {
+    throw "reservation mac is required"
+  }
+  [void](Get-NetshDhcp -Arguments @("scope", $ScopeId, "delete", "reservedip", $IP, $mac))
   Clear-DhcpReservationCache
 }
 
@@ -1653,9 +1878,10 @@ function Update-DhcpReservation {
   if ($null -eq $new) { throw "new reservation is required" }
   $oldScopeId = [string](Get-MapValue -Map $old -Name "scopeId" -DefaultValue "")
   $oldIP = [string](Get-MapValue -Map $old -Name "ip" -DefaultValue "")
+  $oldMAC = [string](Get-MapValue -Map $old -Name "mac" -DefaultValue "")
   if (Test-BlankString $oldScopeId) { throw "old reservation scope id is required" }
   if (Test-BlankString $oldIP) { throw "old reservation ip is required" }
-  Delete-DhcpReservation -ScopeId $oldScopeId -IP $oldIP
+  Delete-DhcpReservation -ScopeId $oldScopeId -IP $oldIP -MAC $oldMAC
   return Create-DhcpReservation -Body $new
 }
 
@@ -1700,16 +1926,14 @@ $listener.Prefixes.Add($prefix)
 $requestPool = $null
 $workers = New-Object System.Collections.ArrayList
 try {
-  $requestPool = New-DhcpRequestRunspacePool -Concurrency $settings.requestConcurrency
+  $requestPool = New-DhcpRequestRunspacePool -Concurrency 50
   $listener.Start()
-  Write-AgentLog -LogPath $settings.logPath -Message ("Legacy DHCP agent started on " + $prefix + " requestConcurrency=" + $settings.requestConcurrency)
+  Write-AgentLog -LogPath $settings.logPath -Message ("Legacy DHCP agent started on " + $prefix)
   Write-Host ("ZoneLease DHCP Legacy Agent listening on " + $prefix)
-  Write-Host ("Request concurrency: " + $settings.requestConcurrency)
   Write-Host "Press Q to stop."
 
   while ($listener.IsListening) {
     Clear-CompletedDhcpRequestWorkers -Workers $workers -LogPath $settings.logPath
-    Wait-DhcpRequestWorkerSlot -Workers $workers -Limit $settings.requestConcurrency -LogPath $settings.logPath
     $context = Get-NextContext -Listener $listener
     if ($null -eq $context) { break }
     [void]$workers.Add((Start-DhcpRequestWorker -Pool $requestPool -Context $context))

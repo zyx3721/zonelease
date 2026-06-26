@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -70,6 +71,7 @@ export function DnsEditRecordDialog({
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>编辑 DNS 记录</DialogTitle>
+          <DialogDescription className="sr-only">修改 DNS 记录值和相关 PTR 记录设置</DialogDescription>
         </DialogHeader>
         {displayRecord ? (
           <div className="space-y-3">

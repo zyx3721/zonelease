@@ -111,10 +111,20 @@ export function userHasAnyPermission(user: AuthUser | null, permissions: string[
 async function readApiError(response: Response) {
   try {
     const body = (await response.json()) as ApiErrorResponse;
-    return body.message || body.error || `请求失败：${response.status}`;
+    return normalizeApiErrorMessage(body.message || body.error || `请求失败：${response.status}`);
   } catch {
     return `请求失败：${response.status}`;
   }
+}
+
+function normalizeApiErrorMessage(message: string) {
+  if (
+    message.includes('JSON request body parsing requires .NET System.Web.Extensions') ||
+    message.includes('Install/enable .NET Framework 3.5/4.x')
+  ) {
+    return 'DHCP Legacy Agent 缺少 .NET Framework JSON 组件，请安装或启用 .NET Framework 3.x 以上';
+  }
+  return message;
 }
 
 export function persistUser(user: AuthUser) {
@@ -129,7 +139,7 @@ export function setCurrentUserSnapshot(user: AuthUser) {
 export async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const headers = new Headers(options.headers);
   if (options.body && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
+    headers.set('Content-Type', 'application/json; charset=utf-8');
   }
   const token = getAuthToken();
   if (options.auth !== false && token && !headers.has('Authorization')) {

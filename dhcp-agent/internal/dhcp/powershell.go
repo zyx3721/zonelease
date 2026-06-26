@@ -3,6 +3,7 @@ package dhcp
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,15 +56,27 @@ function Get-LeaseDurationSeconds {
   if ($null -eq $Value) { return 0 }
   try { return [int][Math]::Round($Value.TotalSeconds) } catch { return 0 }
 }
+function Get-DefaultGateway {
+  param([object]$ScopeId)
+  try {
+    $value = Get-DhcpServerv4OptionValue -ScopeId $ScopeId -OptionId 3 -ErrorAction Stop
+    if ($null -eq $value -or $null -eq $value.Value) { return "" }
+    $values = @($value.Value)
+    if ($values.Count -eq 0) { return "" }
+    return Get-TextValue $values[0]
+  } catch { return "" }
+}
 $items = New-Object System.Collections.ArrayList
 foreach ($scope in @(Get-DhcpServerv4Scope -ErrorAction Stop)) {
   try {
     $leaseDurationSeconds = Get-LeaseDurationSeconds $scope.LeaseDuration
+    $scopeId = Get-TextValue $scope.ScopeId
     [void]$items.Add([PSCustomObject]@{
-      id = Get-TextValue $scope.ScopeId
+      id = $scopeId
       name = Get-TextValue $scope.Name
       description = Get-TextValue $scope.Description
-      subnet = "$(Get-TextValue $scope.ScopeId)/$(Get-TextValue $scope.SubnetMask)"
+      subnet = "$scopeId/$(Get-TextValue $scope.SubnetMask)"
+      defaultGateway = Get-DefaultGateway $scope.ScopeId
       startRange = Get-TextValue $scope.StartRange
       endRange = Get-TextValue $scope.EndRange
       leaseDurationHours = if ($leaseDurationSeconds -gt 0) { [int][Math]::Ceiling($leaseDurationSeconds / 3600) } else { 0 }
@@ -80,19 +93,36 @@ ConvertTo-Json -InputObject $items -Depth 8
 }
 
 func (p *PowerShellProvider) CreateScope(ctx context.Context, scope Scope) (Scope, error) {
-	scope, _, subnetMask, err := normalizeScope(scope)
+	scope, script, err := p.createScopeScript(scope)
 	if err != nil {
 		return Scope{}, err
+	}
+	return scope, run(ctx, script)
+}
+
+func (p *PowerShellProvider) createScopeScript(scope Scope) (Scope, string, error) {
+	scope, _, subnetMask, err := normalizeScope(scope)
+	if err != nil {
+		return Scope{}, "", err
 	}
 	leaseDurationArg := fmt.Sprintf("-LeaseDuration (New-TimeSpan -Hours %d) ", scope.LeaseDurationHours)
 	if scope.LeaseDurationSeconds == -1 {
 		leaseDurationArg = ""
 	}
+	descriptionArg := ""
+	if strings.TrimSpace(scope.Description) != "" {
+		descriptionArg = "-Description " + psString(scope.Description) + " "
+	}
+	defaultGatewayScript := ""
+	if strings.TrimSpace(scope.DefaultGateway) != "" {
+		defaultGatewayScript = fmt.Sprintf("\nSet-DhcpServerv4OptionValue -ScopeId %s -Router %s -ErrorAction Stop", psString(scope.ID), psString(scope.DefaultGateway))
+	}
 	script := fmt.Sprintf(`
 Import-Module DhcpServer -ErrorAction Stop
-Add-DhcpServerv4Scope -Name %s -StartRange %s -EndRange %s -SubnetMask %s %s-State Active -ErrorAction Stop | Out-Null
-`, psString(scope.Name), psString(scope.StartRange), psString(scope.EndRange), psString(subnetMask), leaseDurationArg)
-	return scope, run(ctx, script)
+Add-DhcpServerv4Scope -Name %s -StartRange %s -EndRange %s -SubnetMask %s %s%s-State Active -ErrorAction Stop | Out-Null
+%s
+`, psString(scope.Name), psString(scope.StartRange), psString(scope.EndRange), psString(subnetMask), descriptionArg, leaseDurationArg, defaultGatewayScript)
+	return scope, script, nil
 }
 
 func (p *PowerShellProvider) UpdateScope(ctx context.Context, scope Scope) (Scope, error) {
@@ -100,19 +130,62 @@ func (p *PowerShellProvider) UpdateScope(ctx context.Context, scope Scope) (Scop
 	if err != nil {
 		return Scope{}, err
 	}
-	leaseDurationArg := fmt.Sprintf("-LeaseDuration (New-TimeSpan -Hours %d) ", scope.LeaseDurationHours)
-	if scope.LeaseDurationSeconds == -1 {
-		leaseDurationArg = ""
+	changed := scopeChangedSet(scope.ChangedFields)
+	if len(changed) == 0 {
+		changed["name"] = true
+		changed["description"] = true
+		changed["gateway"] = true
+		changed["lease"] = true
+		changed["range"] = true
+		changed["state"] = true
 	}
-	script := fmt.Sprintf(`
-Import-Module DhcpServer -ErrorAction Stop
-try {
-  Set-DhcpServerv4Scope -ScopeId %s -Name %s %s-State %s -StartRange %s -EndRange %s -ErrorAction Stop
-} catch {
-  Set-DhcpServerv4Scope -ScopeId %s -Name %s %s-State %s -ErrorAction Stop
-}
-`, psString(scopeID), psString(scope.Name), leaseDurationArg, psString(scope.State), psString(scope.StartRange), psString(scope.EndRange), psString(scopeID), psString(scope.Name), leaseDurationArg, psString(scope.State))
+	args := []string{"-ScopeId " + psString(scopeID)}
+	if changed["name"] {
+		args = append(args, "-Name "+psString(scope.Name))
+	}
+	if changed["description"] {
+		args = append(args, "-Description "+psString(scope.Description))
+	}
+	if changed["lease"] {
+		if scope.LeaseDurationSeconds == -1 {
+			args = append(args, "-LeaseDuration (New-TimeSpan -Seconds 4294967295)")
+		} else {
+			leaseSeconds := scope.LeaseDurationSeconds
+			if leaseSeconds <= 0 {
+				leaseSeconds = scope.LeaseDurationHours * 3600
+			}
+			args = append(args, fmt.Sprintf("-LeaseDuration (New-TimeSpan -Seconds %d)", leaseSeconds))
+		}
+	}
+	if changed["state"] {
+		args = append(args, "-State "+psString(scope.State))
+	}
+	if changed["range"] && scope.StartRange != "" && scope.EndRange != "" {
+		args = append(args, "-StartRange "+psString(scope.StartRange), "-EndRange "+psString(scope.EndRange))
+	}
+	commands := []string{"Import-Module DhcpServer -ErrorAction Stop"}
+	if len(args) > 1 {
+		commands = append(commands, "Set-DhcpServerv4Scope "+strings.Join(args, " ")+" -ErrorAction Stop")
+	}
+	if changed["gateway"] {
+		commands = append(commands, "Set-DhcpServerv4OptionValue -ScopeId "+psString(scopeID)+" -Router "+psString(scope.DefaultGateway)+" -ErrorAction Stop")
+	}
+	if len(commands) == 1 {
+		return scope, nil
+	}
+	script := strings.Join(commands, "\n")
 	return scope, run(ctx, script)
+}
+
+func scopeChangedSet(fields []string) map[string]bool {
+	result := map[string]bool{}
+	for _, field := range fields {
+		field = strings.TrimSpace(strings.ToLower(field))
+		if field != "" {
+			result[field] = true
+		}
+	}
+	return result
 }
 
 func (p *PowerShellProvider) SetScopeState(ctx context.Context, scopeID string, active bool) error {
@@ -467,7 +540,9 @@ func parseScopeSubnet(value string) (string, string, error) {
 
 func normalizeScope(scope Scope) (Scope, string, string, error) {
 	scope.Name = strings.TrimSpace(scope.Name)
+	scope.Description = strings.TrimSpace(scope.Description)
 	scope.Subnet = strings.TrimSpace(scope.Subnet)
+	scope.DefaultGateway = strings.TrimSpace(scope.DefaultGateway)
 	scope.StartRange = strings.TrimSpace(scope.StartRange)
 	scope.EndRange = strings.TrimSpace(scope.EndRange)
 	scope.State = strings.TrimSpace(scope.State)
@@ -490,6 +565,15 @@ func normalizeScope(scope Scope) (Scope, string, string, error) {
 	if err := validateIPv4RangeInScope(scopeID, subnetMask, scope.StartRange, scope.EndRange); err != nil {
 		return Scope{}, "", "", err
 	}
+	if scope.DefaultGateway == "" {
+		return Scope{}, "", "", fmt.Errorf("default gateway is required")
+	}
+	if net.ParseIP(scope.DefaultGateway).To4() == nil {
+		return Scope{}, "", "", fmt.Errorf("default gateway must be an IPv4 address")
+	}
+	if err := validateIPv4InScope(scopeID, subnetMask, scope.DefaultGateway, "default gateway"); err != nil {
+		return Scope{}, "", "", err
+	}
 	if scope.LeaseDurationSeconds == -1 {
 		scope.LeaseDurationHours = 0
 	} else if scope.LeaseDurationHours <= 0 {
@@ -507,7 +591,9 @@ func normalizeScope(scope Scope) (Scope, string, string, error) {
 func normalizeScopeUpdate(scope Scope) (Scope, string, error) {
 	scope.ID = strings.TrimSpace(scope.ID)
 	scope.Name = strings.TrimSpace(scope.Name)
+	scope.Description = strings.TrimSpace(scope.Description)
 	scope.Subnet = strings.TrimSpace(scope.Subnet)
+	scope.DefaultGateway = strings.TrimSpace(scope.DefaultGateway)
 	scope.State = strings.TrimSpace(scope.State)
 	if scope.Name == "" {
 		return Scope{}, "", fmt.Errorf("scope name is required")
@@ -522,6 +608,21 @@ func normalizeScopeUpdate(scope Scope) (Scope, string, error) {
 	}
 	if net.ParseIP(scopeID).To4() == nil {
 		return Scope{}, "", fmt.Errorf("scope id must be an IPv4 address")
+	}
+	if scope.DefaultGateway == "" {
+		return Scope{}, "", fmt.Errorf("default gateway is required")
+	}
+	if net.ParseIP(scope.DefaultGateway).To4() == nil {
+		return Scope{}, "", fmt.Errorf("default gateway must be an IPv4 address")
+	}
+	if scope.Subnet != "" {
+		parsedScopeID, subnetMask, err := parseScopeSubnet(scope.Subnet)
+		if err != nil {
+			return Scope{}, "", err
+		}
+		if err := validateIPv4InScope(parsedScopeID, subnetMask, scope.DefaultGateway, "default gateway"); err != nil {
+			return Scope{}, "", err
+		}
 	}
 	if scope.LeaseDurationSeconds == -1 {
 		scope.LeaseDurationHours = 0
@@ -542,8 +643,8 @@ func normalizeReservation(reservation Reservation) (Reservation, error) {
 	reservation.MAC = strings.TrimSpace(reservation.MAC)
 	reservation.Name = strings.TrimSpace(reservation.Name)
 	reservation.Description = strings.TrimSpace(reservation.Description)
-	if reservation.ScopeID == "" || reservation.IP == "" || reservation.MAC == "" || reservation.Name == "" {
-		return Reservation{}, fmt.Errorf("reservation scope id, ip, mac and name are required")
+	if reservation.ScopeID == "" || reservation.IP == "" || reservation.MAC == "" {
+		return Reservation{}, fmt.Errorf("reservation scope id, ip and mac are required")
 	}
 	if net.ParseIP(reservation.ScopeID).To4() == nil {
 		return Reservation{}, fmt.Errorf("reservation scope id must be an IPv4 address")
@@ -584,6 +685,27 @@ func validateIPv4RangeInScope(scopeID, subnetMask, startRange, endRange string) 
 	}
 	if ipv4ToUint32(startIP) > ipv4ToUint32(endIP) {
 		return fmt.Errorf("scope start range must not be greater than end range")
+	}
+	return nil
+}
+
+func validateIPv4InScope(scopeID, subnetMask, value, label string) error {
+	scopeIP := net.ParseIP(strings.TrimSpace(scopeID)).To4()
+	maskIP := net.ParseIP(strings.TrimSpace(subnetMask)).To4()
+	valueIP := net.ParseIP(strings.TrimSpace(value)).To4()
+	if scopeIP == nil || maskIP == nil || valueIP == nil {
+		return fmt.Errorf("%s and scope values must be IPv4 addresses", label)
+	}
+	mask := net.IPMask(maskIP)
+	network := scopeIP.Mask(mask)
+	if !valueIP.Mask(mask).Equal(network) {
+		return fmt.Errorf("%s must belong to the scope subnet", label)
+	}
+	networkUint := binary.BigEndian.Uint32(network)
+	valueUint := binary.BigEndian.Uint32(valueIP)
+	broadcastUint := networkUint | ^binary.BigEndian.Uint32(maskIP)
+	if valueUint == networkUint || valueUint == broadcastUint {
+		return fmt.Errorf("%s cannot be the subnet or broadcast address", label)
 	}
 	return nil
 }

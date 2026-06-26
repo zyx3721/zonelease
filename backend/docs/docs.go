@@ -809,7 +809,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "创建 runtime.refresh.dhcp.scope 局部刷新任务，只同步当前 DHCP 作用域的排除范围、租约和保留地址快照。",
+                "description": "创建 runtime.refresh.dhcp.scope 局部刷新任务，只同步当前 DHCP 作用域的基础信息、排除范围、租约和保留地址快照。",
                 "produces": [
                     "application/json"
                 ],
@@ -3010,6 +3010,9 @@ const docTemplate = `{
         "domain.DHCPScope": {
             "type": "object",
             "properties": {
+                "defaultGateway": {
+                    "type": "string"
+                },
                 "description": {
                     "type": "string"
                 },
@@ -3392,6 +3395,9 @@ const docTemplate = `{
         "router.dhcpScopeResponse": {
             "type": "object",
             "properties": {
+                "defaultGateway": {
+                    "type": "string"
+                },
                 "description": {
                     "type": "string"
                 },

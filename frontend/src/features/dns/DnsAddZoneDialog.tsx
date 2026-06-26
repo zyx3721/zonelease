@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -79,6 +80,7 @@ export function DnsAddZoneDialog({ serverId }: { serverId: string }) {
       <DialogContent className="sm:max-w-[620px]">
         <DialogHeader>
           <DialogTitle>新建 DNS 区域</DialogTitle>
+          <DialogDescription className="sr-only">选择 DNS 区域模式并填写区域名称、类型和动态更新策略</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">

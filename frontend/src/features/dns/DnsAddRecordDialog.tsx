@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -93,6 +94,7 @@ export function DnsAddRecordDialog({ zoneId }: { zoneId: string }) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>添加 DNS 记录</DialogTitle>
+          <DialogDescription className="sr-only">填写 DNS 记录的名称、类型、值和 TTL</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">

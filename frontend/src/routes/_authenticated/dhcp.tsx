@@ -45,6 +45,10 @@ function DhcpPage() {
   const [syncingAgent, setSyncingAgent] = useState(false);
   const [refreshingScope, setRefreshingScope] = useState<string | null>(null);
   const [pendingScopeAction, setPendingScopeAction] = useState<PendingScopeAction>(null);
+  const [visibleScopeAction, setVisibleScopeAction] = useState<Exclude<
+    PendingScopeAction,
+    null
+  > | null>(null);
   const [scopeActionLoading, setScopeActionLoading] = useState(false);
 
   const scopeDataById = useMemo(() => {
@@ -99,7 +103,15 @@ function DhcpPage() {
         .filter(scope => {
           const normalizedScopeQuery = scopeQuery.trim().toLowerCase();
           if (!normalizedScopeQuery) return true;
-          return [scope.name, scope.description, scope.subnet, scope.startRange, scope.endRange, scope.state]
+          return [
+            scope.name,
+            scope.description,
+            scope.subnet,
+            scope.defaultGateway,
+            scope.startRange,
+            scope.endRange,
+            scope.state,
+          ]
             .join(' ')
             .toLowerCase()
             .includes(normalizedScopeQuery);
@@ -118,10 +130,7 @@ function DhcpPage() {
     }
   }, [scopes, selectedId]);
 
-  const leases =
-    scope
-      ? (scopeDataById.leasesByScope.get(scope.id) ?? [])
-      : [];
+  const leases = scope ? (scopeDataById.leasesByScope.get(scope.id) ?? []) : [];
   const exclusions = useMemo(
     () =>
       scope
@@ -129,19 +138,29 @@ function DhcpPage() {
         : EMPTY_DHCP_EXCLUSIONS,
     [scopeDataById, scope?.id]
   );
-  const reservations =
-    scope
-      ? (scopeDataById.reservationsByScope.get(scope.id) ?? [])
-      : [];
+  const reservations = scope ? (scopeDataById.reservationsByScope.get(scope.id) ?? []) : [];
+  const dialogScopeAction = pendingScopeAction ?? visibleScopeAction;
+  const dialogScopeIsDelete = dialogScopeAction === 'delete';
+  const dialogScopeIsActive = scope?.state === 'Active';
+
+  function openScopeAction(action: Exclude<PendingScopeAction, null>) {
+    setVisibleScopeAction(action);
+    setPendingScopeAction(action);
+  }
 
   async function handleConfirmedScopeAction() {
     if (!scope || !pendingScopeAction) return;
+    const action = pendingScopeAction;
+    const scopeSubnet = scope.subnet;
+    const wasActive = scope.state === 'Active';
     setScopeActionLoading(true);
     try {
-      if (pendingScopeAction === 'toggle') {
+      if (action === 'toggle') {
         await toggleScope(scope.id);
+        toast.success(`${scopeSubnet} 作用域已${wasActive ? '停用' : '启用'}`);
       } else {
         await removeScope(scope.id);
+        toast.success(`${scopeSubnet} 作用域已删除`);
       }
       setPendingScopeAction(null);
     } catch (error) {
@@ -172,14 +191,15 @@ function DhcpPage() {
   }
 
   async function handleScopeRefresh(scopeId: string) {
-    const scopeName = db.scopes.find(item => item.id === scopeId)?.name ?? '当前作用域';
-    const toastId = toast.loading(`${scopeName} 正在刷新`, taskToastOptions);
+    const scopeItem = db.scopes.find(item => item.id === scopeId);
+    const scopeLabel = scopeItem?.subnet ?? scopeItem?.name ?? '当前作用域';
+    const toastId = toast.loading(`${scopeLabel} 作用域正在刷新`, taskToastOptions);
     setRefreshingScope(scopeId);
     try {
       const task = await refreshScope(scopeId);
       await waitRefreshTask(task.id);
       await reloadDB();
-      toast.success(`${scopeName} 刷新完成`, taskToastDoneOptionsFor(toastId));
+      toast.success(`${scopeLabel} 作用域刷新完成`, taskToastDoneOptionsFor(toastId));
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : '作用域刷新任务失败',
@@ -222,7 +242,9 @@ function DhcpPage() {
               <Network className="h-4 w-4 text-muted-foreground" />
               <h2 className="text-sm font-semibold">作用域</h2>
             </div>
-            {canManageDhcp ? <AddScopeDialog serverId={selectedAgentId} /> : null}
+            {canManageDhcp ? (
+              <AddScopeDialog serverId={selectedAgentId} existingScopes={scopes} />
+            ) : null}
           </div>
           <div className="shrink-0 border-b border-border px-4 py-3">
             <div className="relative">
@@ -303,7 +325,12 @@ function DhcpPage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => setPendingScopeAction('toggle')}
+                      className={
+                        scope.state === 'Active'
+                          ? 'border-amber-500/35 bg-amber-500/10 text-amber-700 hover:bg-amber-500/16 hover:text-amber-800 dark:text-amber-200 dark:hover:text-amber-100'
+                          : undefined
+                      }
+                      onClick={() => openScopeAction('toggle')}
                     >
                       <Power className="h-3.5 w-3.5 mr-1.5" />
                       {scope.state === 'Active' ? '停用' : '启用'}
@@ -312,16 +339,22 @@ function DhcpPage() {
                       size="sm"
                       variant="outline"
                       className="text-destructive hover:text-destructive"
-                      onClick={() => setPendingScopeAction('delete')}
+                      onClick={() => openScopeAction('delete')}
                     >
                       <Trash2 className="h-3.5 w-3.5 mr-1.5" /> 删除
                     </Button>
                   </div>
                 ) : null}
               </div>
-              <div className="mt-4 grid grid-cols-1 gap-4 text-sm sm:grid-cols-3">
+              <div className="mt-4 grid grid-cols-1 gap-4 text-sm sm:grid-cols-2 xl:grid-cols-4">
                 <Stat label="状态" value={scope.state} />
-                <Stat label="租期" value={formatLeaseDuration(scope.leaseDurationSeconds ?? scope.leaseDurationHours * 3600)} />
+                <Stat label="默认网关" value={displayText(scope.defaultGateway ?? '')} />
+                <Stat
+                  label="租期"
+                  value={formatLeaseDuration(
+                    scope.leaseDurationSeconds ?? scope.leaseDurationHours * 3600
+                  )}
+                />
                 <Stat label="地址范围" value={scopeRangeText(scope.startRange, scope.endRange)} />
               </div>
             </div>
@@ -347,6 +380,8 @@ function DhcpPage() {
           >
             <DhcpScopeDetailsTabs
               scopeId={scope?.id}
+              scopeStartRange={scope?.startRange}
+              scopeEndRange={scope?.endRange}
               canManageDhcp={canManageDhcp}
               leases={leases}
               reservations={reservations}
@@ -357,17 +392,25 @@ function DhcpPage() {
       </div>
       <DhcpConfirmDialog
         open={pendingScopeAction !== null}
-        title={pendingScopeAction === 'delete' ? '删除 DHCP 作用域' : scope?.state === 'Active' ? '停用 DHCP 作用域' : '启用 DHCP 作用域'}
-        description={
-          pendingScopeAction === 'delete'
-            ? `将删除作用域 ${scope?.name ?? ''}，Windows DHCP 侧也会同步删除该作用域`
-            : `将${scope?.state === 'Active' ? '停用' : '启用'}作用域 ${scope?.name ?? ''}`
+        title={
+          dialogScopeIsDelete
+            ? '删除 DHCP 作用域'
+            : dialogScopeIsActive
+              ? '停用 DHCP 作用域'
+              : '启用 DHCP 作用域'
         }
-        confirmText={pendingScopeAction === 'delete' ? '删除' : scope?.state === 'Active' ? '停用' : '启用'}
-        destructive={pendingScopeAction === 'delete'}
+        description={
+          dialogScopeIsDelete
+            ? `将删除作用域 ${scope?.name ?? ''}`
+            : `将${dialogScopeIsActive ? '停用' : '启用'}作用域 ${scope?.name ?? ''}`
+        }
+        confirmText={dialogScopeIsDelete ? '删除' : dialogScopeIsActive ? '停用' : '启用'}
+        tone={dialogScopeIsDelete ? 'destructive' : dialogScopeIsActive ? 'warning' : 'default'}
+        destructive={dialogScopeIsDelete}
         loading={scopeActionLoading}
         onOpenChange={open => {
           if (!open) setPendingScopeAction(null);
+          if (open && pendingScopeAction) setVisibleScopeAction(pendingScopeAction);
         }}
         onConfirm={() => void handleConfirmedScopeAction()}
       />
@@ -384,14 +427,24 @@ function Stat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function compareScopesBySubnet(a: { subnet: string; name: string }, b: { subnet: string; name: string }) {
+function compareScopesBySubnet(
+  a: { subnet: string; name: string },
+  b: { subnet: string; name: string }
+) {
   const subnetCompare = compareIPv4(scopeNetwork(a.subnet), scopeNetwork(b.subnet));
   if (subnetCompare !== 0) return subnetCompare;
+  const maskCompare = scopePrefixLength(a.subnet) - scopePrefixLength(b.subnet);
+  if (maskCompare !== 0) return maskCompare;
   return a.name.localeCompare(b.name, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' });
 }
 
 function scopeNetwork(subnet: string) {
   return subnet.split('/')[0]?.trim() ?? '';
+}
+
+function scopePrefixLength(subnet: string) {
+  const value = Number(subnet.split('/')[1]?.trim());
+  return Number.isFinite(value) ? value : 0;
 }
 
 function compareIPv4(a: string, b: string) {

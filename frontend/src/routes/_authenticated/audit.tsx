@@ -25,7 +25,13 @@ import { onZoneLeaseRefresh } from '@/lib/refresh';
 import { localTimestamp, type ExportColumn } from '@/lib/export-data';
 import { AppTooltip } from '@/components/app-tooltip';
 import { ExportDialog } from '@/components/export-dialog';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -824,6 +830,7 @@ function DetailDialog({ detail, onClose }: { detail: DetailItem; onClose: () => 
       <DialogContent className="max-h-[86vh] max-w-4xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
+          <DialogDescription className="sr-only">查看任务或审计记录的详细字段和载荷内容</DialogDescription>
         </DialogHeader>
         <div className="zl-hidden-scrollbar max-h-[72vh] overflow-y-auto">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

@@ -845,8 +845,23 @@ func (s *Service) isLegacyAgent(ctx context.Context, server domain.Server) bool 
 func (s *Service) syncDHCPScope(ctx context.Context, server domain.Server, scopeExternalID string) error {
 	legacyAgent := s.isLegacyAgent(ctx, server)
 	if legacyAgent {
-		defer s.clearLegacyDHCPCache(server)
+		target, err := s.fetchLegacyDHCPScope(ctx, server, scopeExternalID)
+		if err != nil {
+			if agentNotFound(err) {
+				return s.store.DeleteDHCPScopeByExternalID(ctx, server.ID, scopeExternalID)
+			}
+			return err
+		}
+		if strings.TrimSpace(target.ExternalID) == "" {
+			return s.store.DeleteDHCPScopeByExternalID(ctx, server.ID, scopeExternalID)
+		}
+		exclusions, leases, reservations, err := s.fetchDHCPScopeDetails(ctx, server, target.ExternalID, legacyAgent)
+		if err != nil {
+			return err
+		}
+		return s.store.ReplaceDHCPScopeSnapshot(ctx, server.ID, target, exclusions, leases, reservations)
 	}
+
 	var scopes []domain.DHCPScope
 	if err := s.agent.Get(ctx, server.AgentURL, server.APIKey, "/dhcp/scopes", &scopes, server.TLSInsecure); err != nil {
 		return err
@@ -870,12 +885,20 @@ func (s *Service) syncDHCPScope(ctx context.Context, server domain.Server, scope
 	return s.store.ReplaceDHCPScopeSnapshot(ctx, server.ID, target, exclusions, leases, reservations)
 }
 
+func (s *Service) fetchLegacyDHCPScope(ctx context.Context, server domain.Server, scopeExternalID string) (domain.DHCPScope, error) {
+	var scope domain.DHCPScope
+	path := "/dhcp/scopes/" + url.PathEscape(scopeExternalID)
+	if err := s.agent.Get(ctx, server.AgentURL, server.APIKey, path, &scope, server.TLSInsecure); err != nil {
+		return domain.DHCPScope{}, err
+	}
+	scope.ServerID = server.ID
+	scope.ExternalID = strutil.FirstNonEmpty(scope.ExternalID, scope.ID, scope.Subnet)
+	return scope, nil
+}
+
 func (s *Service) fetchDHCPScopeDetails(ctx context.Context, server domain.Server, scopeExternalID string, legacyAgent bool) ([]domain.DHCPExclusion, []domain.DHCPLease, []domain.DHCPReservation, error) {
 	if legacyAgent {
-		exclusions, leases, reservations, err := s.fetchLegacyDHCPScopeDetails(ctx, server, scopeExternalID)
-		if err == nil || !agentNotFound(err) {
-			return exclusions, leases, reservations, err
-		}
+		return s.fetchLegacyDHCPScopeDetails(ctx, server, scopeExternalID)
 	}
 	var exclusions []domain.DHCPExclusion
 	exclusionPath := "/dhcp/scopes/" + url.PathEscape(scopeExternalID) + "/exclusions"
@@ -936,12 +959,6 @@ func (s *Service) fetchLegacyDHCPScopeDetails(ctx context.Context, server domain
 	path := "/dhcp/scopes/" + url.PathEscape(scopeExternalID) + "/details"
 	if err := s.agent.Get(ctx, server.AgentURL, server.APIKey, path, &detail, server.TLSInsecure); err != nil {
 		return nil, nil, nil, err
-	}
-	if detail.Exclusions == nil {
-		exclusionPath := "/dhcp/scopes/" + url.PathEscape(scopeExternalID) + "/exclusions"
-		if err := s.agent.Get(ctx, server.AgentURL, server.APIKey, exclusionPath, &detail.Exclusions, server.TLSInsecure); err != nil && !agentNotFound(err) {
-			return nil, nil, nil, err
-		}
 	}
 	for i := range detail.Exclusions {
 		detail.Exclusions[i].ScopeID = scopeExternalID

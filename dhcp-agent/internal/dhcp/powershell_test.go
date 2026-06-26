@@ -62,13 +62,35 @@ func TestValidateIPv4RangeInScope(t *testing.T) {
 func TestCreateScopeRejectsInvalidRangeBeforePowerShell(t *testing.T) {
 	provider := NewPowerShellProvider()
 	_, err := provider.CreateScope(t.Context(), Scope{
-		Name:       "Office",
-		Subnet:     "10.24.0.0/24",
-		StartRange: "10.24.1.10",
-		EndRange:   "10.24.1.20",
+		Name:           "Office",
+		Subnet:         "10.24.0.0/24",
+		DefaultGateway: "10.24.1.1",
+		StartRange:     "10.24.1.10",
+		EndRange:       "10.24.1.20",
 	})
 	if err == nil || !strings.Contains(err.Error(), "must belong to the scope subnet") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateScopeScriptIncludesDescription(t *testing.T) {
+	provider := NewPowerShellProvider()
+	_, script, err := provider.createScopeScript(Scope{
+		Name:           "Office",
+		Description:    "Office clients",
+		Subnet:         "10.24.0.0/24",
+		DefaultGateway: "10.24.0.1",
+		StartRange:     "10.24.0.10",
+		EndRange:       "10.24.0.20",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(script, `-Description 'Office clients'`) {
+		t.Fatalf("create scope script should include description: %s", script)
+	}
+	if !strings.Contains(script, `Set-DhcpServerv4OptionValue -ScopeId '10.24.0.0' -Router '10.24.0.1'`) {
+		t.Fatalf("create scope script should include default gateway: %s", script)
 	}
 }
 

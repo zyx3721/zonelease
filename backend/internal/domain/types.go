@@ -274,6 +274,7 @@ type DHCPScope struct {
 	Name                 string `json:"name"`
 	Description          string `json:"description"`
 	Subnet               string `json:"subnet"`
+	DefaultGateway       string `json:"defaultGateway,omitempty"`
 	StartRange           string `json:"startRange"`
 	EndRange             string `json:"endRange"`
 	LeaseDurationHours   int    `json:"leaseDurationHours"`

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -13,7 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { updateReservation, type DhcpReservation } from '@/lib/dns-dhcp-store';
+import { reloadDB, updateReservation, type DhcpReservation } from '@/lib/dns-dhcp-store';
 
 export function EditReservationDialog({ reservation }: { reservation: DhcpReservation }) {
   const [open, setOpen] = useState(false);
@@ -32,7 +33,9 @@ export function EditReservationDialog({ reservation }: { reservation: DhcpReserv
     setSaving(false);
   }, [open, reservation]);
 
-  const disabled = !ip.trim() || !mac.trim() || !name.trim() || saving;
+  const changed =
+    name.trim() !== reservation.name || description.trim() !== reservation.description;
+  const disabled = !name.trim() || !changed || saving;
 
   async function handleSave() {
     if (disabled) return;
@@ -45,6 +48,8 @@ export function EditReservationDialog({ reservation }: { reservation: DhcpReserv
         name: name.trim(),
         description: description.trim(),
       });
+      await reloadDB();
+      toast.success('保留地址更新成功');
       setOpen(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'DHCP 保留地址更新失败');
@@ -67,18 +72,19 @@ export function EditReservationDialog({ reservation }: { reservation: DhcpReserv
           </Button>
         </DialogTrigger>
       </AppTooltip>
-      <DialogContent>
+      <DialogContent onOpenAutoFocus={event => event.preventDefault()}>
         <DialogHeader>
           <DialogTitle>编辑地址保留</DialogTitle>
+          <DialogDescription className="sr-only">修改 DHCP 保留地址的名称和描述</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div>
             <Label>IP 地址</Label>
-            <Input value={ip} onChange={event => setIp(event.target.value)} />
+            <Input value={ip} disabled />
           </div>
           <div>
             <Label>MAC 地址</Label>
-            <Input value={mac} onChange={event => setMac(event.target.value)} />
+            <Input value={mac} disabled />
           </div>
           <div>
             <Label>名称</Label>

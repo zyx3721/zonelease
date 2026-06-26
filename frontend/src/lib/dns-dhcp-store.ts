@@ -45,6 +45,7 @@ export interface DhcpScope {
   name: string;
   description: string;
   subnet: string;
+  defaultGateway?: string;
   startRange: string;
   endRange: string;
   leaseDurationHours: number;
@@ -72,7 +73,7 @@ export interface DhcpLease {
   ip: string;
   mac: string;
   hostname: string;
-  state: 'Active' | 'Expired' | 'Reserved' | 'ReservedActive' | string;
+  state: 'Active' | 'Expired' | 'Reserved' | 'ReservedActive' | 'ReservedInactive' | string;
   expiresAt: string;
 }
 
@@ -412,26 +413,68 @@ export function removeExclusion(id: string) {
 }
 
 export function addReservation(r: Omit<DhcpReservation, 'id'>) {
-  return mutate(
-    api<DhcpReservation>('/api/dhcp/reservations', { method: 'POST', body: JSON.stringify(r) })
-  );
+  return api<DhcpReservation>('/api/dhcp/reservations', {
+    method: 'POST',
+    body: JSON.stringify(r),
+  }).then(result => {
+    pendingFastDB = null;
+    pendingDNSDB = null;
+    updateCachedDB(db => ({
+      ...db,
+      reservations: [...db.reservations.filter(item => item.id !== result.id), result],
+      leases: db.leases.map(lease =>
+        lease.scopeId === result.scopeId && lease.ip === result.ip
+          ? { ...lease, hostname: result.name, state: 'ReservedInactive', expiresAt: 'never' }
+          : lease
+      ),
+    }));
+    notifyChange();
+    return result;
+  });
 }
 
 export function updateReservation(id: string, r: DhcpReservation) {
-  return mutate(
-    api<DhcpReservation>(`/api/dhcp/reservations/${encodeURIComponent(id)}`, {
-      method: 'PUT',
-      body: JSON.stringify(r),
-    })
-  );
+  return api<DhcpReservation>(`/api/dhcp/reservations/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(r),
+  }).then(result => {
+    pendingFastDB = null;
+    pendingDNSDB = null;
+    updateCachedDB(db => ({
+      ...db,
+      reservations: db.reservations.map(item => (item.id === id ? result : item)),
+      leases: db.leases.map(lease =>
+        lease.scopeId === result.scopeId && lease.ip === result.ip
+          ? { ...lease, hostname: result.name }
+          : lease
+      ),
+    }));
+    notifyChange();
+    return result;
+  });
 }
 
 export function removeReservation(id: string) {
-  return mutate(
-    api<{ status: string }>(`/api/dhcp/reservations/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    })
-  );
+  return api<{ status: string }>(`/api/dhcp/reservations/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  }).then(result => {
+    pendingFastDB = null;
+    pendingDNSDB = null;
+    updateCachedDB(db => {
+      const reservation = db.reservations.find(item => item.id === id);
+      return {
+        ...db,
+        reservations: db.reservations.filter(item => item.id !== id),
+        leases: reservation
+          ? db.leases.filter(
+              lease => !(lease.scopeId === reservation.scopeId && lease.ip === reservation.ip)
+            )
+          : db.leases,
+      };
+    });
+    notifyChange();
+    return result;
+  });
 }
 
 export function removeLease(id: string) {

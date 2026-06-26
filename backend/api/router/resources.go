@@ -2,6 +2,9 @@ package router
 
 import (
 	"context"
+	"encoding/binary"
+	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -157,6 +160,10 @@ func (r *Router) createScope(w http.ResponseWriter, req *http.Request) {
 	body.ExternalID = dhcpExternalID(body.ExternalID, body.ID, body.Subnet)
 	body.ID = body.ExternalID
 	body.ServerID = server.ID
+	if err := validateDHCPScopeDefaultGateway(body.Subnet, body.DefaultGateway); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_default_gateway", err.Error())
+		return
+	}
 	normalizeDHCPScopeLeaseDuration(&body)
 	refreshTarget := dhcpScopeRefreshTarget(server.ID, body.ExternalID, body.Name)
 	finishRefresh := r.refresh.begin(refreshTarget)
@@ -227,6 +234,7 @@ func (r *Router) scopeAction(w http.ResponseWriter, req *http.Request) {
 	agentCtx, cancel := context.WithTimeout(req.Context(), r.agentOperationTimeout(req.Context()))
 	defer cancel()
 	if err := r.agent.Post(agentCtx, server.AgentURL, server.APIKey, "/dhcp/scopes/"+url.PathEscape(scopeExternalID)+"/"+agentAction, nil, &ignored, server.TLSInsecure); err != nil {
+		r.markDHCPScopeDirtyAfterAgentFailure(refreshTarget, err)
 		writeError(w, http.StatusBadGateway, "agent_toggle_scope_failed", "Agent 切换 DHCP 作用域状态失败："+err.Error())
 		return
 	}
@@ -268,6 +276,7 @@ func (r *Router) deleteScope(w http.ResponseWriter, req *http.Request) {
 	agentCtx, cancel := context.WithTimeout(req.Context(), r.agentOperationTimeout(req.Context()))
 	defer cancel()
 	if err := r.agent.Delete(agentCtx, server.AgentURL, server.APIKey, "/dhcp/scopes/"+url.PathEscape(scopeExternalID), &ignored, server.TLSInsecure); err != nil {
+		r.markDHCPScopeDirtyAfterAgentFailure(refreshTarget, err)
 		writeError(w, http.StatusBadGateway, "agent_delete_scope_failed", "Agent 删除 DHCP 作用域失败："+err.Error())
 		return
 	}
@@ -313,6 +322,7 @@ func (r *Router) deleteLease(w http.ResponseWriter, req *http.Request) {
 	defer cancel()
 	if err := r.agent.Post(agentCtx, server.AgentURL, server.APIKey, "/dhcp/leases/release", map[string]string{"scopeId": scopeExternalID, "ip": lease.IP}, &ignored, server.TLSInsecure); err != nil {
 		if !agentReturnedNotFound(err) {
+			r.markDHCPScopeDirtyAfterAgentFailure(refreshTarget, err)
 			writeError(w, http.StatusBadGateway, "agent_delete_lease_failed", "Agent 释放 DHCP 租约失败："+err.Error())
 			return
 		}
@@ -320,6 +330,7 @@ func (r *Router) deleteLease(w http.ResponseWriter, req *http.Request) {
 		if err == nil {
 			goto leaseReleased
 		}
+		r.markDHCPScopeDirtyAfterAgentFailure(refreshTarget, err)
 		writeError(w, http.StatusBadGateway, "agent_delete_lease_failed", "Agent 释放 DHCP 租约失败："+err.Error())
 		return
 	}
@@ -344,7 +355,7 @@ func (r *Router) createReservation(w http.ResponseWriter, req *http.Request) {
 	if !decode(w, req, &body) {
 		return
 	}
-	if strings.TrimSpace(body.ScopeID) == "" || strings.TrimSpace(body.IP) == "" || strings.TrimSpace(body.MAC) == "" || strings.TrimSpace(body.Name) == "" {
+	if strings.TrimSpace(body.ScopeID) == "" || strings.TrimSpace(body.IP) == "" || strings.TrimSpace(body.MAC) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_reservation", "保留地址参数不完整")
 		return
 	}
@@ -367,6 +378,7 @@ func (r *Router) createReservation(w http.ResponseWriter, req *http.Request) {
 	agentCtx, cancel := context.WithTimeout(req.Context(), r.agentOperationTimeout(req.Context()))
 	defer cancel()
 	if err := r.agent.Post(agentCtx, server.AgentURL, server.APIKey, "/dhcp/reservations", body, &agentReservation, server.TLSInsecure); err != nil {
+		r.markDHCPScopeDirtyAfterAgentFailure(refreshTarget, err)
 		writeError(w, http.StatusBadGateway, "agent_create_reservation_failed", "Agent 创建 DHCP 保留地址失败："+err.Error())
 		return
 	}
@@ -377,8 +389,15 @@ func (r *Router) createReservation(w http.ResponseWriter, req *http.Request) {
 		body.Description = agentReservation.Description
 	}
 	body.ScopeID = scope.ID
-	if item, err := r.store.CreateReservation(req.Context(), body); err == nil {
-		body.ID = item.ID
+	item, err := r.store.CreateReservation(req.Context(), body)
+	if err != nil {
+		writeError(w, statusFromErr(err), "create_reservation_snapshot_failed", "创建 DHCP 保留地址快照失败")
+		return
+	}
+	body.ID = item.ID
+	if err := r.store.MarkLeaseReservedInactiveWithHostname(req.Context(), scope.ID, body.IP, body.Name); err != nil {
+		writeError(w, http.StatusInternalServerError, "update_lease_snapshot_failed", "更新 DHCP 租约快照失败")
+		return
 	}
 	r.writeAudit(req, "Created DHCP reservation", body.IP, "DHCP", "success", map[string]any{
 		"scope":  scope.Name,
@@ -422,8 +441,9 @@ func (r *Router) deleteReservation(w http.ResponseWriter, req *http.Request) {
 	var ignored map[string]any
 	agentCtx, cancel := context.WithTimeout(req.Context(), r.agentOperationTimeout(req.Context()))
 	defer cancel()
-	if err := r.agent.Post(agentCtx, server.AgentURL, server.APIKey, "/dhcp/reservations/delete", map[string]string{"scopeId": scopeExternalID, "ip": reservation.IP}, &ignored, server.TLSInsecure); err != nil {
+	if err := r.agent.Post(agentCtx, server.AgentURL, server.APIKey, "/dhcp/reservations/delete", map[string]string{"scopeId": scopeExternalID, "ip": reservation.IP, "mac": reservation.MAC}, &ignored, server.TLSInsecure); err != nil {
 		if !agentReturnedNotFound(err) {
+			r.markDHCPScopeDirtyAfterAgentFailure(refreshTarget, err)
 			writeError(w, http.StatusBadGateway, "agent_delete_reservation_failed", "Agent 删除 DHCP 保留地址失败："+err.Error())
 			return
 		}
@@ -431,11 +451,13 @@ func (r *Router) deleteReservation(w http.ResponseWriter, req *http.Request) {
 		if err == nil {
 			goto reservationDeleted
 		}
+		r.markDHCPScopeDirtyAfterAgentFailure(refreshTarget, err)
 		writeError(w, http.StatusBadGateway, "agent_delete_reservation_failed", "Agent 删除 DHCP 保留地址失败："+err.Error())
 		return
 	}
 reservationDeleted:
 	_ = r.store.DeleteReservation(req.Context(), id)
+	_ = r.store.DeleteLeaseByScopeIP(req.Context(), scope.ID, reservation.IP)
 	r.writeAudit(req, "Deleted DHCP reservation", reservation.IP, "DHCP", "success", map[string]any{
 		"scope":  scope.Name,
 		"ip":     reservation.IP,
@@ -480,6 +502,60 @@ func normalizeDHCPScopeLeaseDuration(scope *domain.DHCPScope) {
 	}
 }
 
+func validateDHCPScopeDefaultGateway(subnet, defaultGateway string) error {
+	defaultGateway = strings.TrimSpace(defaultGateway)
+	if defaultGateway == "" {
+		return fmt.Errorf("默认网关不能为空")
+	}
+	ip := net.ParseIP(defaultGateway).To4()
+	if ip == nil {
+		return fmt.Errorf("默认网关必须是有效的 IPv4 地址")
+	}
+	networkIP, maskIP, err := parseDHCPScopeSubnet(subnet)
+	if err != nil {
+		return err
+	}
+	mask := net.IPMask(maskIP)
+	network := networkIP.Mask(mask)
+	if !ip.Mask(mask).Equal(network) {
+		return fmt.Errorf("默认网关必须在当前作用域子网内")
+	}
+	networkUint := binary.BigEndian.Uint32(network)
+	gatewayUint := binary.BigEndian.Uint32(ip)
+	broadcastUint := networkUint | ^binary.BigEndian.Uint32(maskIP)
+	if gatewayUint == networkUint || gatewayUint == broadcastUint {
+		return fmt.Errorf("默认网关不能是子网地址或广播地址")
+	}
+	return nil
+}
+
+func parseDHCPScopeSubnet(subnet string) (net.IP, net.IP, error) {
+	parts := strings.Split(strings.TrimSpace(subnet), "/")
+	if len(parts) != 2 {
+		return nil, nil, fmt.Errorf("子网必须是有效的 IPv4 CIDR 或子网掩码格式")
+	}
+	ip := net.ParseIP(strings.TrimSpace(parts[0])).To4()
+	if ip == nil {
+		return nil, nil, fmt.Errorf("子网必须是有效的 IPv4 CIDR 或子网掩码格式")
+	}
+	maskText := strings.TrimSpace(parts[1])
+	if maskText == "" {
+		return nil, nil, fmt.Errorf("子网必须是有效的 IPv4 CIDR 或子网掩码格式")
+	}
+	if !strings.Contains(maskText, ".") {
+		prefix := -1
+		if _, err := fmt.Sscanf(maskText, "%d", &prefix); err != nil || prefix < 0 || prefix > 32 {
+			return nil, nil, fmt.Errorf("子网必须是有效的 IPv4 CIDR 或子网掩码格式")
+		}
+		return ip, net.IP(net.CIDRMask(prefix, 32)).To4(), nil
+	}
+	mask := net.ParseIP(maskText).To4()
+	if mask == nil {
+		return nil, nil, fmt.Errorf("子网必须是有效的 IPv4 CIDR 或子网掩码格式")
+	}
+	return ip, mask, nil
+}
+
 func normalizeDNSZoneName(name string, reverse bool) string {
 	name = strings.Trim(strings.TrimSpace(name), ".")
 	if !reverse {
@@ -506,6 +582,11 @@ func dhcpScopeRefreshTarget(serverID, scopeExternalID, scopeName string) operati
 		ScopeExternalID: scopeExternalID,
 		ScopeName:       scopeName,
 	}
+}
+
+func (r *Router) markDHCPScopeDirtyAfterAgentFailure(target operationRefreshTarget, err error) {
+	r.logger.Warn("Mark DHCP scope dirty after agent operation failure", "server", target.ServerID, "scope", target.ScopeExternalID, "error", err)
+	r.refresh.markDirty(target)
 }
 
 func filterStateForUser(state domain.State, user domain.User) domain.State {

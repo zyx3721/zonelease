@@ -3,23 +3,27 @@ package dhcp
 import "context"
 
 type Scope struct {
-	ID                   string `json:"id"`
-	Name                 string `json:"name"`
-	Description          string `json:"description"`
-	Subnet               string `json:"subnet"`
-	StartRange           string `json:"startRange"`
-	EndRange             string `json:"endRange"`
-	LeaseDurationHours   int    `json:"leaseDurationHours"`
-	LeaseDurationSeconds int    `json:"leaseDurationSeconds,omitempty"`
-	State                string `json:"state"`
-	ServerID             string `json:"serverId"`
+	ID                   string   `json:"id"`
+	Name                 string   `json:"name"`
+	Description          string   `json:"description"`
+	Subnet               string   `json:"subnet"`
+	DefaultGateway       string   `json:"defaultGateway,omitempty"`
+	StartRange           string   `json:"startRange"`
+	EndRange             string   `json:"endRange"`
+	LeaseDurationHours   int      `json:"leaseDurationHours"`
+	LeaseDurationSeconds int      `json:"leaseDurationSeconds,omitempty"`
+	State                string   `json:"state"`
+	ServerID             string   `json:"serverId"`
+	OldStartRange        string   `json:"oldStartRange,omitempty"`
+	OldEndRange          string   `json:"oldEndRange,omitempty"`
+	ChangedFields        []string `json:"changedFields,omitempty"`
 }
 
 type Exclusion struct {
-	ID       string `json:"id"`
-	ScopeID  string `json:"scopeId"`
-	StartIP  string `json:"startIp"`
-	EndIP    string `json:"endIp"`
+	ID      string `json:"id"`
+	ScopeID string `json:"scopeId"`
+	StartIP string `json:"startIp"`
+	EndIP   string `json:"endIp"`
 }
 
 type Lease struct {

@@ -152,13 +152,20 @@ func TestCreateReservationRouteUsesRequestBody(t *testing.T) {
 
 func TestUpdateScopeRouteUsesPathScopeID(t *testing.T) {
 	provider := &fakeProvider{}
-	body := dhcp.Scope{Name: "Office", Subnet: "10.24.0.0/24", StartRange: "10.24.0.10", EndRange: "10.24.0.20", LeaseDurationHours: 24}
+	body := dhcp.Scope{
+		Name: "Office", Description: "Office clients", Subnet: "10.24.0.0/24",
+		StartRange: "10.24.0.10", EndRange: "10.24.0.20", LeaseDurationHours: 24,
+		ChangedFields: []string{"description"},
+	}
 	recorder := executeAgentRequest(t, provider, http.MethodPut, "/dhcp/scopes/10.24.0.0", body, "secret")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("unexpected status: %d", recorder.Code)
 	}
 	if provider.scopeID != "10.24.0.0" || provider.scope.ID != "10.24.0.0" {
 		t.Fatalf("unexpected scope update: %+v", provider.scope)
+	}
+	if provider.scope.Description != body.Description || len(provider.scope.ChangedFields) != 1 || provider.scope.ChangedFields[0] != "description" {
+		t.Fatalf("unexpected scope update body: %+v", provider.scope)
 	}
 }
 

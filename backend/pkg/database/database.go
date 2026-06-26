@@ -83,5 +83,15 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) error
 		}
 		logger.Info("Applied migration", "version", version)
 	}
+	if err := ensureSchema(ctx, pool); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureSchema(ctx context.Context, pool *pgxpool.Pool) error {
+	if _, err := pool.Exec(ctx, `ALTER TABLE dhcp_scopes ADD COLUMN IF NOT EXISTS default_gateway TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("ensure dhcp scope default gateway column: %w", err)
+	}
 	return nil
 }

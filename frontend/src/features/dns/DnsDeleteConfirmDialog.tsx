@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -49,7 +50,9 @@ export function DnsDeleteConfirmDialog({
             </span>
             <div className="min-w-0">
               <DialogTitle className="text-2xl font-semibold">{title}</DialogTitle>
-              <p className="mt-2 text-base leading-6 text-muted-foreground">{description}</p>
+              <DialogDescription className="mt-2 text-base leading-6">
+                {description}
+              </DialogDescription>
             </div>
           </div>
         </DialogHeader>

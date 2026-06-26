@@ -5,16 +5,28 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { addExclusion } from '@/lib/dns-dhcp-store';
+import { addExclusion, type DhcpExclusion } from '@/lib/dns-dhcp-store';
+import { validateExclusionRange } from './dhcpValidation';
+import { IPv4Input } from './IPv4Input';
 
-export function AddExclusionDialog({ scopeId }: { scopeId: string }) {
+export function AddExclusionDialog({
+  scopeId,
+  scopeStartRange,
+  scopeEndRange,
+  exclusions,
+}: {
+  scopeId: string;
+  scopeStartRange: string;
+  scopeEndRange: string;
+  exclusions: DhcpExclusion[];
+}) {
   const [open, setOpen] = useState(false);
   const [startIp, setStartIp] = useState('');
   const [endIp, setEndIp] = useState('');
@@ -31,9 +43,21 @@ export function AddExclusionDialog({ scopeId }: { scopeId: string }) {
 
   async function handleSave() {
     if (disabled) return;
+    const validationError = validateExclusionRange({
+      startIp: startIp.trim(),
+      endIp: endIp.trim(),
+      scopeStartRange,
+      scopeEndRange,
+      existingExclusions: exclusions,
+    });
+    if (validationError) {
+      toast.error(validationError);
+      return;
+    }
     setSaving(true);
     try {
       await addExclusion({ scopeId, startIp: startIp.trim(), endIp: endIp.trim() });
+      toast.success('新增排除范围成功');
       setOpen(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'DHCP 排除范围创建失败');
@@ -53,15 +77,17 @@ export function AddExclusionDialog({ scopeId }: { scopeId: string }) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>新增排除范围</DialogTitle>
+          <DialogDescription className="sr-only">填写要从 DHCP 作用域中排除的起始和结束 IP 地址</DialogDescription>
         </DialogHeader>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
           <div>
             <Label>起始 IP 地址</Label>
-            <Input value={startIp} onChange={event => setStartIp(event.target.value)} />
+            <IPv4Input value={startIp} onChange={setStartIp} aria-label="排除范围起始 IP 地址" />
           </div>
+          <span className="pt-6 text-sm text-muted-foreground">-</span>
           <div>
             <Label>结束 IP 地址</Label>
-            <Input value={endIp} onChange={event => setEndIp(event.target.value)} />
+            <IPv4Input value={endIp} onChange={setEndIp} aria-label="排除范围结束 IP 地址" />
           </div>
         </div>
         <DialogFooter>

@@ -191,7 +191,7 @@ func (s *Store) UpdateServerHealth(ctx context.Context, id, status string, offli
 
 func (s *Store) ListScopes(ctx context.Context) ([]domain.DHCPScope, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id::text, name, description, subnet, start_range, end_range, lease_duration_hours, lease_duration_seconds, state, server_id::text, external_id, last_synced_at, sync_status, last_error
+		SELECT id::text, name, description, subnet, default_gateway, start_range, end_range, lease_duration_hours, lease_duration_seconds, state, server_id::text, external_id, last_synced_at, sync_status, last_error
 		FROM dhcp_scopes ORDER BY name
 	`)
 	if err != nil {
@@ -202,7 +202,7 @@ func (s *Store) ListScopes(ctx context.Context) ([]domain.DHCPScope, error) {
 	for rows.Next() {
 		var item domain.DHCPScope
 		var lastSyncedAt *time.Time
-		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.Subnet, &item.StartRange, &item.EndRange, &item.LeaseDurationHours, &item.LeaseDurationSeconds, &item.State, &item.ServerID, &item.ExternalID, &lastSyncedAt, &item.SyncStatus, &item.LastError); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.Subnet, &item.DefaultGateway, &item.StartRange, &item.EndRange, &item.LeaseDurationHours, &item.LeaseDurationSeconds, &item.State, &item.ServerID, &item.ExternalID, &lastSyncedAt, &item.SyncStatus, &item.LastError); err != nil {
 			return nil, err
 		}
 		normalizeScopeLeaseDuration(&item)
@@ -218,9 +218,9 @@ func (s *Store) GetScope(ctx context.Context, id string) (domain.DHCPScope, erro
 	var item domain.DHCPScope
 	var lastSyncedAt *time.Time
 	err := s.pool.QueryRow(ctx, `
-		SELECT id::text, name, description, subnet, start_range, end_range, lease_duration_hours, lease_duration_seconds, state, server_id::text, external_id, last_synced_at, sync_status, last_error
+		SELECT id::text, name, description, subnet, default_gateway, start_range, end_range, lease_duration_hours, lease_duration_seconds, state, server_id::text, external_id, last_synced_at, sync_status, last_error
 		FROM dhcp_scopes WHERE id=$1
-	`, id).Scan(&item.ID, &item.Name, &item.Description, &item.Subnet, &item.StartRange, &item.EndRange, &item.LeaseDurationHours, &item.LeaseDurationSeconds, &item.State, &item.ServerID, &item.ExternalID, &lastSyncedAt, &item.SyncStatus, &item.LastError)
+	`, id).Scan(&item.ID, &item.Name, &item.Description, &item.Subnet, &item.DefaultGateway, &item.StartRange, &item.EndRange, &item.LeaseDurationHours, &item.LeaseDurationSeconds, &item.State, &item.ServerID, &item.ExternalID, &lastSyncedAt, &item.SyncStatus, &item.LastError)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return item, ErrNotFound
 	}
@@ -237,10 +237,10 @@ func (s *Store) CreateScope(ctx context.Context, item domain.DHCPScope) (domain.
 	}
 	normalizeScopeLeaseDuration(&item)
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO dhcp_scopes(name, description, subnet, start_range, end_range, lease_duration_hours, lease_duration_seconds, state, server_id, external_id, last_synced_at, sync_status, last_error)
-		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), 'synced', '')
+		INSERT INTO dhcp_scopes(name, description, subnet, default_gateway, start_range, end_range, lease_duration_hours, lease_duration_seconds, state, server_id, external_id, last_synced_at, sync_status, last_error)
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), 'synced', '')
 		RETURNING id::text
-	`, item.Name, item.Description, item.Subnet, item.StartRange, item.EndRange, item.LeaseDurationHours, item.LeaseDurationSeconds, item.State, item.ServerID, item.ExternalID).Scan(&item.ID)
+	`, item.Name, item.Description, item.Subnet, item.DefaultGateway, item.StartRange, item.EndRange, item.LeaseDurationHours, item.LeaseDurationSeconds, item.State, item.ServerID, item.ExternalID).Scan(&item.ID)
 	return item, err
 }
 
@@ -251,15 +251,16 @@ func (s *Store) UpdateScope(ctx context.Context, item domain.DHCPScope) (domain.
 		SET name=$2,
 			description=$3,
 			subnet=$4,
-			start_range=$5,
-			end_range=$6,
-			lease_duration_hours=$7,
-			lease_duration_seconds=$8,
-			state=$9,
-			external_id=$10,
+			default_gateway=$5,
+			start_range=$6,
+			end_range=$7,
+			lease_duration_hours=$8,
+			lease_duration_seconds=$9,
+			state=$10,
+			external_id=$11,
 			updated_at=now()
 		WHERE id=$1
-	`, item.ID, item.Name, item.Description, item.Subnet, item.StartRange, item.EndRange, item.LeaseDurationHours, item.LeaseDurationSeconds, item.State, item.ExternalID)
+	`, item.ID, item.Name, item.Description, item.Subnet, item.DefaultGateway, item.StartRange, item.EndRange, item.LeaseDurationHours, item.LeaseDurationSeconds, item.State, item.ExternalID)
 	if err != nil {
 		return item, err
 	}
@@ -428,6 +429,41 @@ func (s *Store) DeleteLease(ctx context.Context, id string) error {
 	return nil
 }
 
+func (s *Store) MarkLeaseReservedInactive(ctx context.Context, scopeID, ip string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE dhcp_leases
+		SET state='ReservedInactive',
+			expires_at='9999-12-31 23:59:59+00'::timestamptz
+		WHERE scope_id=$1 AND ip=$2
+	`, scopeID, ip)
+	return err
+}
+
+func (s *Store) MarkLeaseReservedInactiveWithHostname(ctx context.Context, scopeID, ip, hostname string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE dhcp_leases
+		SET hostname=$3,
+			state='ReservedInactive',
+			expires_at='9999-12-31 23:59:59+00'::timestamptz
+		WHERE scope_id=$1 AND ip=$2
+	`, scopeID, ip, hostname)
+	return err
+}
+
+func (s *Store) UpdateLeaseHostnameByScopeIP(ctx context.Context, scopeID, ip, hostname string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE dhcp_leases
+		SET hostname=$3
+		WHERE scope_id=$1 AND ip=$2
+	`, scopeID, ip, hostname)
+	return err
+}
+
+func (s *Store) DeleteLeaseByScopeIP(ctx context.Context, scopeID, ip string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM dhcp_leases WHERE scope_id=$1 AND ip=$2`, scopeID, ip)
+	return err
+}
+
 func (s *Store) ListReservations(ctx context.Context) ([]domain.DHCPReservation, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id::text, scope_id::text, ip, mac, name, description, external_id, last_synced_at FROM dhcp_reservations ORDER BY ip`)
 	if err != nil {
@@ -481,8 +517,7 @@ func (s *Store) UpdateReservation(ctx context.Context, item domain.DHCPReservati
 			mac=$3,
 			name=$4,
 			description=$5,
-			external_id=$6,
-			updated_at=now()
+			external_id=$6
 		WHERE id=$1
 	`, item.ID, item.IP, item.MAC, item.Name, item.Description, item.ExternalID)
 	if err != nil {

@@ -34,6 +34,8 @@ export const Route = createFileRoute('/_authenticated/dns')({
   component: DnsPage,
 });
 
+const RECORD_RENDER_BATCH_SIZE = 200;
+
 function DnsPage() {
   const db = useDB({ includeDns: true });
   const canManageDns = userHasPermission(getStoredUser(), 'dns.manage');
@@ -48,16 +50,14 @@ function DnsPage() {
   const [exportLoading, setExportLoading] = useState(false);
   const [exportZones, setExportZones] = useState(db.zones);
   const [exportRecords, setExportRecords] = useState(db.records);
-  const dnsAgents = useMemo(
-    () => db.servers.filter(server => server.role === 'DNS'),
-    [db.servers]
-  );
+  const dnsAgents = useMemo(() => db.servers.filter(server => server.role === 'DNS'), [db.servers]);
   const [selectedAgentId, setSelectedAgentId] = useState(dnsAgents[0]?.id ?? '');
   const [syncingAgent, setSyncingAgent] = useState(false);
   const [recordSort, setRecordSort] = useState<{ key: DnsSortKey; direction: SortDirection }>({
     key: 'name',
     direction: null,
   });
+  const [visibleRecordCount, setVisibleRecordCount] = useState(RECORD_RENDER_BATCH_SIZE);
 
   const recordCountByZone = useMemo(() => {
     const counts = new Map<string, number>();
@@ -108,6 +108,19 @@ function DnsPage() {
       .filter(r => (query ? r.name.includes(query) || r.value.includes(query) : true));
     return sortRecords(items, recordSort);
   }, [db.records, zone?.id, query, recordSort]);
+  const visibleRecords = useMemo(
+    () => records.slice(0, visibleRecordCount),
+    [records, visibleRecordCount]
+  );
+  const hasMoreRecords = visibleRecordCount < records.length;
+
+  useEffect(() => {
+    setVisibleRecordCount(RECORD_RENDER_BATCH_SIZE);
+  }, [zone?.id, query, recordSort]);
+
+  useEffect(() => {
+    setQuery('');
+  }, [zone?.id]);
 
   async function handleZoneRefresh(zoneId: string) {
     const zoneName = db.zones.find(item => item.id === zoneId)?.name ?? '当前区域';
@@ -402,7 +415,7 @@ function DnsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {records.map(r => {
+                {visibleRecords.map(r => {
                   const recordEditable = zone?.reverse
                     ? r.type === 'PTR'
                     : r.type === 'A' || r.type === 'CNAME';
@@ -473,6 +486,27 @@ function DnsPage() {
                     </tr>
                   );
                 })}
+                {hasMoreRecords ? (
+                  <tr>
+                    <td colSpan={6} className="px-5 py-4">
+                      <div className="flex flex-wrap items-center justify-center gap-3 text-sm text-muted-foreground">
+                        <span>
+                          已显示 {visibleRecords.length} / {records.length} 条
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setVisibleRecordCount(count => count + RECORD_RENDER_BATCH_SIZE)
+                          }
+                        >
+                          加载更多
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
                 {records.length === 0 && (
                   <tr>
                     <td

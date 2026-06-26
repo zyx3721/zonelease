@@ -38,6 +38,7 @@ DHCP 作用域写入 `dhcp_scopes`：
 | `name` | 作用域名称 | DHCP Agent 或平台输入 |
 | `description` | 作用域描述 / 注释 | DHCP Agent |
 | `subnet` | 子网信息 | DHCP Agent 或平台输入 |
+| `default_gateway` | 默认网关，Windows DHCP Option 003 Router | DHCP Agent 或平台输入 |
 | `start_range` | 起始地址 | DHCP Agent 或平台输入 |
 | `end_range` | 结束地址 | DHCP Agent 或平台输入 |
 | `lease_duration_hours` | 租约小时数 | DHCP Agent 或平台输入 |
@@ -95,6 +96,14 @@ DHCP 保留地址写入 `dhcp_reservations`：
 - 保留地址：`scope_id + ip`
 - 排除范围：`scope_id + start_ip + end_ip`
 
+前端展示规则：
+
+- 左侧作用域按作用域网段 IPv4 自然排序，同网段再按掩码和名称排序。
+- 租约列表默认按 IP 地址自然排序，IP 地址、名称、MAC 和租用截止日期列名支持默认、升序和降序三态切换。
+- 保留地址列表默认按 IP 地址自然排序，IP、MAC、名称和描述列名支持默认、升序和降序三态切换。
+- 排除范围列表默认按起始 IP 地址自然排序，不提供列名排序切换。
+- 租约列表默认只渲染前 `200` 条，底部显示“已显示 x / 总数 条”和“加载更多”，点击后按 `200` 条继续展示；搜索和排序仍基于当前作用域全部租约。
+
 全量同步采用“以 Agent 快照为准”的收敛策略：
 
 - Agent 返回的新作用域、排除范围、租约和保留地址会写入数据库。
@@ -140,14 +149,15 @@ POST /api/refresh
 
 Windows Server 2008/2008 R2 legacy Agent 会在 `/health` 中返回 `mode=legacy`。后端识别后的采集规则如下：
 
-- 优先通过 `GET /dhcp/scopes/{scopeId}/details` 一次读取该作用域租约和保留地址。
-- 旧 legacy 脚本返回 `404` 时，后端会回退到分别请求租约和保留地址接口。
+- `GET /dhcp/scopes` 通过一次全局 `netsh dhcp server dump` 解析作用域基础信息。
+- 优先通过 `GET /dhcp/scopes/{scopeId}/details` 一次读取该作用域详情。
+- 详情接口中只有租约列表继续执行 `show clients 1`。
+- 保留地址、排除范围、地址范围、名称、描述、状态和租期均复用本次同步的 dump 缓存。
 - 每个作用域详情采集成功后会立即写入该作用域快照。
 - 如果全量同步总超时，已完成作用域的数据仍会保留在页面和数据库中。
 - Go Agent 和 legacy Agent 的作用域详情采集并发都由「系统配置 / 基础配置 / 同步参数」控制。
-- legacy Agent 本地再通过 `DHCP_AGENT_LEGACY_REQUEST_CONCURRENCY` 控制 runspace worker 池可同时处理的 HTTP 请求数。
-- legacy Agent 依赖 `netsh` 枚举租约和保留地址，作用域或租约较多时应适当调大全量同步超时。
-- 应根据目标服务器性能把 DHCP 作用域并发和 legacy 本地请求并发从较低值逐步上调。
+- legacy Agent 依赖 `netsh` 枚举租约，作用域或租约较多时应适当调大全量同步超时。
+- 应根据目标服务器性能把 DHCP 作用域并发从较低值逐步上调。
 
 - `GET /dhcp/scopes`
 - `GET /dhcp/scopes/{scopeId}/details`
@@ -163,8 +173,7 @@ Go DHCP Agent 内部单次 PowerShell 命令由 `DHCP_AGENT_POWERSHELL_TIMEOUT_S
 - 覆盖作用域、租约、保留地址读取，以及作用域、租约和保留地址操作。
 - legacy DHCP Agent 不读取该变量，继续使用 `netsh.exe` 直接调用方式。
 - Go DHCP Agent 和 legacy DHCP Agent 都会将运行日志写入 `DHCP_AGENT_LOG_PATH` 指定的文件。
-- legacy DHCP Agent 通过 `DHCP_AGENT_LEGACY_REQUEST_CONCURRENCY` 控制本地 HTTP 请求并发，范围 `1` 到 `50`，默认 `5`。
-- legacy DHCP Agent 会在同步期间复用一次全局 `netsh dhcp server dump` 解析出的保留地址缓存；后端在 DHCP 同步结束后会调用 Agent 清理本次缓存。
+- legacy DHCP Agent 会在全量同步期间复用一次全局 `netsh dhcp server dump` 解析出的作用域、保留地址、排除范围、地址范围、状态和租期缓存；后端仅在全量 DHCP 同步结束后调用 Agent 清理本次缓存。
 - 大作用域租约或保留地址枚举耗时较长时，如果 Go Agent 内部 PowerShell 超时小于后端全量同步超时，后端可能收到连接被远端关闭或 Agent 返回错误。
 
 Go DHCP Agent 读取作用域、租约和保留地址时会对单条 PowerShell 对象做容错处理：
@@ -225,7 +234,9 @@ POST /api/dhcp/scopes/{id}/refresh
 runtime.refresh.dhcp.scope
 ```
 
-该任务只同步当前作用域的排除范围、租约和保留地址，不会刷新其他作用域，也不会遍历其他 DHCP 服务器。
+该任务只同步当前作用域，不会刷新其他作用域，也不会遍历其他 DHCP 服务器。
+
+legacy Agent 下单作用域刷新会先调用 `GET /dhcp/scopes/{scopeId}`，由 Agent 执行 `netsh dhcp server scope <scopeId> dump` 解析当前作用域基础信息、保留地址、排除范围、地址范围、状态和租期；随后再通过详情接口读取该作用域租约，不调用 `/dhcp/cache/clear`。
 
 前端会显示固定 toast：
 
@@ -251,8 +262,9 @@ DHCP Agent 提供以下接口：
 | `GET /health` | 健康检查 |
 | `GET /dhcp/probe` | DHCP Agent 轻量连通性测试，不枚举作用域 |
 | `GET /dhcp/scopes` | 读取 DHCP 作用域列表 |
+| `GET /dhcp/scopes/{scopeId}` | legacy Agent 读取单个作用域基础信息 |
 | `POST /dhcp/scopes` | 创建 DHCP 作用域 |
-| `PUT /dhcp/scopes/{scopeId}` | 更新 DHCP 作用域名称、租期、状态和地址范围 |
+| `PUT /dhcp/scopes/{scopeId}` | 更新 DHCP 作用域名称、描述、租期、状态和地址范围 |
 | `POST /dhcp/scopes/state` | 通过 JSON body 启用或停用 DHCP 作用域 |
 | `DELETE /dhcp/scopes/{scopeId}` | 删除 DHCP 作用域 |
 | `POST /dhcp/scopes/{scopeId}/activate` | 启用 DHCP 作用域 |
@@ -269,38 +281,53 @@ DHCP Agent 提供以下接口：
 | `POST /dhcp/reservations/update` | 通过 JSON body 更新 DHCP 保留地址 |
 | `POST /dhcp/reservations/delete` | 通过 JSON body 删除 DHCP 保留地址 |
 | `DELETE /dhcp/reservations/{scopeId}/{ip}` | 删除 DHCP 保留地址 |
-| `POST /dhcp/cache/clear` | legacy Agent 清理本次 DHCP 同步使用的全局 dump 缓存 |
+| `POST /dhcp/cache/clear` | legacy Agent 清理本次全量 DHCP 同步使用的全局 dump 缓存 |
 
 Windows Server 2008/2008 R2 legacy DHCP Agent 也支持以上接口。legacy 模式说明如下：
 
 - 不依赖新版 `DhcpServer` PowerShell 模块。
 - 使用 `netsh dhcp server` 执行读取和写入操作。
-- 作用域列表读取 `netsh dhcp server show scope`，并从行内识别作用域地址、子网掩码、状态、名称和注释。
-- 作用域注释写入 `dhcp_scopes.description`，前端在作用域标题下方显示，空值显示为 `-`。
+- JSON 请求体依赖 .NET `System.Web.Extensions` 解析；目标服务器未启用该组件时，编辑作用域、释放租约、删除排除范围和删除保留地址等 body 版接口会失败，前端会提示安装或启用 .NET Framework 3.5/4.x。
+- legacy Agent 的 JSON 请求体默认按 UTF-8 解码，避免中文名称和描述在 Windows 默认代码页下被误读为乱码。
+- 作用域列表不再执行 `netsh dhcp server show scope`。
+- legacy Agent 会从一次全局 `netsh dhcp server dump` 解析作用域列表。
+- legacy Agent 会从全局 `netsh dhcp server dump` 的 `add scope` 行解析作用域 IP 网段、名称和描述，并写入 `dhcp_scopes.name` 与 `dhcp_scopes.description`；描述为空时保持为空，前端显示为 `-`。
 - legacy Agent 会从全局 `netsh dhcp server dump` 的当前作用域上下文和 `add iprange` 行解析地址范围。
 - legacy Agent 会从全局 `netsh dhcp server dump` 的当前作用域上下文和 `add excluderange` 行解析排除范围。
+- legacy Agent 会从全局 `netsh dhcp server dump` 的 `scope <scopeId> set state` 行解析作用域启用状态。
 - legacy Agent 会从全局 `netsh dhcp server dump` 的 `optionvalue 51 DWORD` 按作用域解析租期秒数；值为 `-1` 时表示无限制。
+- 修改无限制租期时，Agent 写入 DHCP 服务器的实际值为 `4294967295`；平台查询和展示逻辑仍按 `-1` 识别无限制。
 - 后端保存 `lease_duration_seconds`，并兼容写入向上取整后的 `lease_duration_hours`。
 - 前端优先使用秒级租期动态展示为天 / 时 / 分；无限制时显示为“无限制”。
 - 脚本源码保持 ASCII 以降低 Windows Server 2008/2008 R2 PowerShell 2.0 编码解析风险。
 - `GET /dhcp/probe` 用于后端测试 DHCP Agent 连接，不枚举作用域，也不会触发全局 `dump`。
-- `GET /dhcp/scopes` 用于同步作用域列表，会解析租期并预热本次同步的全局 `dump` 缓存。
-- legacy Agent 的逐作用域详情采集有两层并发控制：后端按系统配置中的 DHCP 作用域并发同时请求多个作用域，legacy Agent 本地再按 `DHCP_AGENT_LEGACY_REQUEST_CONCURRENCY` 使用 runspace worker 池处理这些 HTTP 请求。
+- `GET /dhcp/scopes` 用于同步作用域列表，会执行一次全局 `dump` 并预热本次同步缓存。
+- `GET /dhcp/scopes/{scopeId}` 用于单作用域刷新，会执行 `scope <scopeId> dump` 并只预热该作用域缓存，不调用 `/dhcp/cache/clear`。
+- legacy Agent 的逐作用域详情采集由后端按系统配置中的 DHCP 作用域并发同时请求多个作用域。
 - Windows Server 2008/2008 R2 上建议先从 `2` 到 `3` 观察，若终端或 Agent 响应明显变慢，可继续调低并发；若仅因总耗时超过限制失败，可优先调大 Agent 全量同步超时。
-- legacy Agent 支持 `GET /dhcp/scopes/{scopeId}/details` 后，每个作用域详情从排除范围、租约和保留地址多个 HTTP 往返降为一个 HTTP 往返；该接口内部会并行读取排除范围、租约和保留地址。
-- 旧脚本不支持 `details` 时，后端会自动回退到排除范围、租约和保留地址接口；旧脚本不支持排除范围接口时，后端按空列表处理。
+- legacy Agent 支持 `GET /dhcp/scopes/{scopeId}/details` 后，每个作用域详情从排除范围、租约和保留地址多个 HTTP 往返降为一个 HTTP 往返；该接口中排除范围和保留地址读取缓存，租约读取继续执行 `show clients 1`。
 - legacy 粒度同步对齐 DNS 区域记录同步的入库方式：作用域列表先入库，每个作用域详情成功后单独入库，避免全量任务超时时丢弃已完成的作用域数据。
 - 如果后端全量同步超时后关闭 HTTP 连接，legacy Agent 写响应时可能检测到客户端断开，并记录 `Client disconnected` 日志；这表示调用方已取消请求，不代表 `netsh` DHCP 枚举本身失败。
-- 完整作用域详情采集时，地址范围优先从全局 `dump` 的 `add iprange` 读取，缺失时回退到 `netsh dhcp server scope <scopeId> show iprange`。
-- 同一作用域下排除范围、租约和保留地址读取会并行执行。
-- 租约读取使用 `show clients 1`，从 IP 行识别 IPv4、MAC、租用截止日期和 `-U-` / `-D-` 等租约类型标记，并从同一行类型标记后提取租约名称；租用截止日期为 `永不过期` 时，前端按 DHCP 管理控制台显示为 `保留 (活动的)`。
+- 完整作用域详情采集时，地址范围直接从全局 `dump` 的 `add iprange` 读取。
+- 更新作用域时，后端会把实际变化字段通过 `changedFields` 传给 DHCP Agent。
+- Agent 只执行名称 / 描述、租期、状态或地址范围中发生变化的操作。
+- legacy Agent 创建作用域和更新多个作用域配置时，会把同一请求内需要执行的 `netsh dhcp server` 子命令合并为一次 `netsh -f` 批处理会话，减少多次启动 `netsh.exe` 和重复连接 DHCP 服务的耗时。
+- 当前前端编辑弹窗只提供名称、描述、租期和地址范围；状态变更仍通过停用 / 启用入口完成。
+- legacy Agent 更新描述时执行 `netsh dhcp server scope <scopeId> set comment <description>`，名称变化只执行 `set name <name>`。
+- 更新作用域地址范围时，前端允许只修改起始或只修改结束 IP；若起始和结束 IP 同时修改，则必须同时缩小范围或同时扩大范围，避免一端越过旧范围后另一端仍落在旧范围内导致 DHCP 服务器判定无效或重叠。
+- 新建作用域提交前会校验地址范围必须位于子网内，不能包含子网地址或广播地址，并且作用域子网不能与当前 Agent 已有作用域重复或重叠。
+- legacy Agent 地址范围变化时只执行一次 `add iprange <startRange> <endRange>`，不执行 `delete iprange`，也不再执行 `show iprange` 查询旧地址范围。
+- 全量同步时，只有逐作用域租约读取的 `show clients 1` 参与 DHCP 作用域并发。
+- 租约读取使用 `show clients 1`，从 IP 行识别 IPv4、MAC、租用截止日期和 `-U-` / `-D-` 等租约类型标记，并从同一行类型标记后提取租约名称。
+- 租用截止日期为 `永不过期` 时，legacy Agent 会写入 `state=ReservedActive` 和 `expiresAt=never`，前端按 DHCP 管理控制台显示为 `保留 (活动的)`。
+- 租用截止日期为 `不活动` 时，legacy Agent 会写入 `state=ReservedInactive` 和 `expiresAt=never`，前端按 DHCP 管理控制台显示为 `保留 (不活动的)`。
 - 保留地址读取使用同步期间保留的全局 `netsh dhcp server dump` 缓存，并从 `reservedip` 命令行按作用域分组提取保留 IP、MAC、名称和描述。
 - 排除范围读取使用同步期间保留的全局 `netsh dhcp server dump` 缓存，并从当前作用域上下文和 `add excluderange` 命令行按作用域分组提取；未匹配到时按空排除范围返回，不再回退执行逐作用域 `scope <scopeId> dump`。
-- 同步结束后后端会通知 legacy Agent 清理本次同步使用的全局 `dump` 缓存。
+- 全量同步结束后后端会通知 legacy Agent 清理本次同步使用的全局 `dump` 缓存。
 - 任一作用域的租约或保留地址枚举失败时，后端刷新任务会记录失败；已完成作用域会保留已写入的最新快照。
 - legacy Agent 使用端口级单实例互斥，并在日志中记录每个 HTTP 请求的 `requestId` 和耗时，便于排查同步链路。
-- legacy Agent 会记录 DHCP 采集阶段日志，包括 `dhcp scopes start/done`、`dhcp leases start/done scope=<scopeId>` 和 `dhcp reservations start/done scope=<scopeId>`。如果服务器终端看似卡住，可通过最后一条 `start` 日志定位卡在具体作用域的租约或保留地址枚举。
-- 支持 `.env` 中的 `DHCP_AGENT_PORT`、`DHCP_AGENT_API_KEY`、`DHCP_AGENT_ALLOW_ANONYMOUS`、`DHCP_AGENT_LOG_PATH` 和 `DHCP_AGENT_LEGACY_REQUEST_CONCURRENCY`。
+- legacy Agent 会记录 DHCP 采集阶段日志，包括 `dhcp scopes start/done`、`dhcp scope details start/done scope=<scopeId>` 和 `dhcp leases start/done scope=<scopeId>`。如果服务器终端看似卡住，可通过最后一条 `start` 日志定位卡在具体作用域的租约枚举。
+- 支持 `.env` 中的 `DHCP_AGENT_PORT`、`DHCP_AGENT_API_KEY`、`DHCP_AGENT_ALLOW_ANONYMOUS` 和 `DHCP_AGENT_LOG_PATH`。
 
 业务接口需要携带：
 
@@ -314,19 +341,23 @@ X-API-Key: <DHCP_AGENT_API_KEY>
 
 DHCP 管理操作遵循“Agent 成功后按作用域延迟合并局部刷新任务”的规则：
 
-- 创建 DHCP 作用域：后端转发到 `POST /dhcp/scopes`，成功后按当前作用域延迟合并创建 `runtime.refresh.dhcp.scope` 任务。
-- 更新 DHCP 作用域：后端转发到 `PUT /dhcp/scopes/{scopeId}`，当前更新作用域名称、租期、状态和地址范围；子网仍以 Agent 同步快照为准。
+- 创建 DHCP 作用域：后端转发到 `POST /dhcp/scopes`，成功后按当前作用域延迟合并创建 `runtime.refresh.dhcp.scope` 任务；go Agent 通过 `Add-DhcpServerv4Scope -Description` 写入描述，并通过 `Set-DhcpServerv4OptionValue -Router` 写入默认网关；legacy Agent 在 `add scope` 后通过 `set comment` 写入非空描述，并通过 `set optionvalue 3 IPADDRESS` 写入默认网关；legacy Agent 会把创建、地址范围、启用、租期和默认网关写入合并为一次 `netsh -f` 批处理会话。
+- 更新 DHCP 作用域：后端转发到 `PUT /dhcp/scopes/{scopeId}`，当前编辑弹窗支持更新作用域名称、描述、默认网关、租期和地址范围；默认网关为必填项；子网仍以 Agent 同步快照为准；状态通过停用 / 启用入口更新；后端会传递变化字段，Agent 只执行实际变化项；legacy Agent 修改描述使用 `set comment`，默认网关变化使用 `set optionvalue 3 IPADDRESS`，地址范围变化只执行一次 `add iprange`，不删除旧范围，也不再额外查询 DHCP 服务器；同一请求内有多个变化项时，legacy Agent 会合并为一次 `netsh -f` 批处理会话执行。
 - 启用或停用作用域：后端根据当前数据库状态转发到 `activate` 或 `deactivate`，成功后按当前作用域延迟合并创建 `runtime.refresh.dhcp.scope` 任务。
-- 刷新 DHCP 作用域：后端立即创建 `runtime.refresh.dhcp.scope` 任务，只同步当前作用域排除范围、租约和保留地址。
+- 刷新 DHCP 作用域：后端立即创建 `runtime.refresh.dhcp.scope` 任务，只同步当前作用域基础信息、排除范围、租约和保留地址。
 - 删除 DHCP 作用域：后端转发到 `DELETE /dhcp/scopes/{scopeId}`，成功后删除数据库中该作用域及其排除范围、租约、保留地址快照。
 - 创建 DHCP 排除范围：后端转发到 `POST /dhcp/exclusions`，成功后按当前作用域延迟合并创建 `runtime.refresh.dhcp.scope` 任务。
 - 删除 DHCP 排除范围：后端转发到 `POST /dhcp/exclusions/delete`，成功后按当前作用域延迟合并创建 `runtime.refresh.dhcp.scope` 任务。
 - 释放 DHCP 租约：后端优先转发到 `POST /dhcp/leases/release`，旧 Agent 返回 `404` 时回退到 `DELETE /dhcp/scopes/{scopeId}/leases/{ip}`，成功后按当前作用域延迟合并创建 `runtime.refresh.dhcp.scope` 任务。
-- 创建 DHCP 保留地址：后端转发到 `POST /dhcp/reservations`，成功后按当前作用域延迟合并创建 `runtime.refresh.dhcp.scope` 任务。
-- 更新 DHCP 保留地址：后端转发到 `POST /dhcp/reservations/update`，成功后按当前作用域延迟合并创建 `runtime.refresh.dhcp.scope` 任务。
-- 删除 DHCP 保留地址：后端优先转发到 `POST /dhcp/reservations/delete`，旧 Agent 返回 `404` 时回退到 `DELETE /dhcp/reservations/{scopeId}/{ip}`，成功后按当前作用域延迟合并创建 `runtime.refresh.dhcp.scope` 任务。
+- 创建 DHCP 保留地址：前端从租约列表行内“添加到保留”图标按钮进入，弹窗展示 IP、MAC、名称和描述配置后转发到 `POST /dhcp/reservations`，名称为空时保持为空；成功后按当前作用域延迟合并创建 `runtime.refresh.dhcp.scope` 任务，并将本地同 IP 租约快照名称更新为保留名称，同时标记为 `ReservedInactive`。
+- 更新 DHCP 保留地址：后端转发到 `POST /dhcp/reservations/update`，成功后会立即更新同作用域同 IP 的租约名称快照，并按当前作用域延迟合并创建 `runtime.refresh.dhcp.scope` 任务；legacy Agent 会先执行 `delete reservedip <ip> <mac>` 删除旧保留，再执行 `add reservedip` 写入新名称和描述。
+- 删除 DHCP 保留地址：后端优先转发到 `POST /dhcp/reservations/delete` 并携带数据库快照中的 MAC，旧 Agent 返回 `404` 时回退到 `DELETE /dhcp/reservations/{scopeId}/{ip}`，成功后删除本地同 IP 租约快照，并按当前作用域延迟合并创建 `runtime.refresh.dhcp.scope` 任务；legacy Agent 删除时直接执行 `delete reservedip <ip> <mac>`，不会在缺少 MAC 时额外执行全局 `dump` 兜底。
 
 如果 Agent 调用失败，后端不会修改数据库快照，并返回 `agent_*_failed` 类错误。
+
+如果已有关联数据库快照的 DHCP 作用域操作在 Agent 阶段失败，后端也会标记当前作用域需要延迟局部刷新。
+
+这样可以在 legacy `netsh -f` 批处理部分命令已生效但整体返回失败时，尽快重新读取 DHCP 服务器真实状态。
 
 如果 Agent 成功但后续局部刷新任务失败，`refresh_tasks` 会记录失败状态，页面仍会保留操作后的本地快照兜底，并依赖下一次全量刷新完成最终收敛。
 
@@ -337,8 +368,9 @@ Go DHCP Agent 执行写入类操作前会做基础参数校验：
 - 起始地址和结束地址必须属于该作用域网段，且起始地址不能大于结束地址。
 - 启停、删除作用域时，作用域 ID 必须是 IPv4 地址。
 - 创建或删除排除范围时，作用域 ID、起始 IP 和结束 IP 必须是 IPv4 地址。
+- 新增排除范围提交前会校验起止 IP 格式、起始 IP 不大于结束 IP、排除范围必须位于当前作用域地址范围内，且不能与已有排除范围重叠。
 - 释放租约、创建或删除保留地址时，作用域 ID 和目标 IP 必须是 IPv4 地址。
-- 创建保留地址时，作用域 ID、IP、MAC/ClientId 和名称不能为空。
+- 创建保留地址时，作用域 ID、IP 和 MAC/ClientId 不能为空；名称允许为空。
 
 ## 六、任务、审计和 SSE
 

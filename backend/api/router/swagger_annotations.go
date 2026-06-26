@@ -706,7 +706,7 @@ func swaggerToggleScope() {}
 
 // swaggerRefreshDHCPScope godoc
 // @Summary 刷新指定 DHCP 作用域
-// @Description 创建 runtime.refresh.dhcp.scope 局部刷新任务，只同步当前 DHCP 作用域的排除范围、租约和保留地址快照。
+// @Description 创建 runtime.refresh.dhcp.scope 局部刷新任务，只同步当前 DHCP 作用域的基础信息、排除范围、租约和保留地址快照。
 // @Tags DHCP
 // @Produce json
 // @Security BearerAuth
