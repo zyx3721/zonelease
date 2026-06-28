@@ -155,7 +155,7 @@ jobs:
 
           echo "✅ DNS Agent 编译完成"
 
-      - name: 构建 Frontend 静态资源包
+      - name: 构建 Frontend Nitro SSR 产物包
         working-directory: frontend
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
@@ -164,11 +164,11 @@ jobs:
           echo "📦 安装 Frontend 依赖..."
           npm ci
 
-          echo "🔨 构建 Frontend 静态资源..."
+          echo "🔨 构建 Frontend Nitro SSR 产物..."
           npm run build
 
-          echo "📦 打包 Frontend 静态资源..."
-          tar -czf dist-release/zonelease-frontend_${VERSION}.tar.gz -C dist .
+          echo "📦 打包 Frontend Nitro SSR 产物..."
+          tar -czf dist-release/zonelease-frontend_${VERSION}.tar.gz -C .output .
 
           echo "📝 生成 Frontend 校验和..."
           cd dist-release
@@ -228,7 +228,7 @@ jobs:
           - DHCP Agent Windows ARM64: \`zonelease-dhcp-agent_${VERSION}_windows_arm64.zip\`
           - DNS Agent Windows AMD64: \`zonelease-dns-agent_${VERSION}_windows_amd64.zip\`
           - DNS Agent Windows ARM64: \`zonelease-dns-agent_${VERSION}_windows_arm64.zip\`
-          - Frontend 静态资源包: \`zonelease-frontend_${VERSION}.tar.gz\`
+          - Frontend Nitro SSR 产物包: \`zonelease-frontend_${VERSION}.tar.gz\`
 
           ### 🔐 校验和
           请下载对应的 \`zonelease-xxx_${VERSION}_checksums.txt\` 验证文件完整性。

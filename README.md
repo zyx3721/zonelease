@@ -1993,7 +1993,15 @@ Go DHCP Agent 同步说明：
 
 # 十一、版本历史
 
-当前项目尚未整理正式版本日志。发布版本时请在 `verchanglog/` 中新增对应版本文档，并同步更新本章节。
+## v1.0.0 - 2026-06-29
+
+首个正式版本，提供 Windows DNS / DHCP 统一管理控制台、Go 后端服务、DNS / DHCP Agent、刷新同步链路、操作审计、通知中心、Docker Compose 部署和 GitHub Actions 发布流水线。
+
+- 前端生产服务改为 TanStack React Start + Nitro `.output` 输出。
+- Docker 单镜像内集成 Go 后端、Nginx 和前端 Nitro SSR 服务。
+- DHCP Go Agent 优化作用域详情聚合、租期识别、保留地址和租约操作。
+- 完善 DNS / DHCP 刷新同步、Redis/SSE 通知、审计日志和导出能力。
+- 详细更新内容见 [verchanglog/v1.0.0.md](verchanglog/v1.0.0.md)。
 
 # 十二、许可证
 
