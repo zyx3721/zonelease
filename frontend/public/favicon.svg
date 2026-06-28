@@ -1,23 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="ZoneLease">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ZoneLease app icon">
   <defs>
-    <linearGradient id="bg" x1="16" y1="10" x2="82" y2="88" gradientUnits="userSpaceOnUse">
+    <linearGradient id="bg" x1="85.3333" y1="53.3333" x2="437.3333" y2="469.3333" gradientUnits="userSpaceOnUse">
       <stop stop-color="#3b82f6"/>
       <stop offset="0.52" stop-color="#06b6d4"/>
       <stop offset="1" stop-color="#10b981"/>
     </linearGradient>
-    <linearGradient id="line" x1="28" y1="27" x2="72" y2="70" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#dbeafe"/>
-      <stop offset="1" stop-color="#ccfbf1"/>
-    </linearGradient>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#020617" flood-opacity="0.28"/>
+      <feDropShadow dx="0" dy="42.6667" stdDeviation="42.6667" flood-color="#020617" flood-opacity="0.28"/>
     </filter>
   </defs>
-  <rect x="8" y="8" width="80" height="80" rx="18" fill="url(#bg)" filter="url(#shadow)"/>
-  <path d="M29 30h38L41 66h30" fill="none" stroke="#f8fafc" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M24 25h13m22 0h13M24 72h13m22 0h13" stroke="url(#line)" stroke-width="5" stroke-linecap="round"/>
-  <circle cx="24" cy="25" r="5" fill="#e0f2fe"/>
-  <circle cx="72" cy="25" r="5" fill="#d1fae5"/>
-  <circle cx="24" cy="72" r="5" fill="#dbeafe"/>
-  <circle cx="72" cy="72" r="5" fill="#ccfbf1"/>
+  <rect x="42.6667" y="42.6667" width="426.6667" height="426.6667" rx="96" fill="url(#bg)" filter="url(#shadow)"/>
+  <g transform="translate(12.8 12.8) scale(7.6)">
+    <path d="M18 20H46L18 44H46" fill="none" stroke="#F8FAFC" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M18 20H32M32 32H46M18 44H46" fill="none" stroke="#22D3EE" stroke-width="2.5" stroke-linecap="round"/>
+    <circle cx="18" cy="20" r="4" fill="#14B8A6"/>
+    <circle cx="46" cy="44" r="4" fill="#38BDF8"/>
+  </g>
 </svg>
