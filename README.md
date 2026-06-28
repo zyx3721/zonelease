@@ -349,7 +349,7 @@ nohup npm run dev > zonelease-frontend.log 2>&1 &
 
 ## 3.1 部署目录结构
 
-Docker Compose 部署相关文件统一放在 `deploy/` 目录下。`zonelease` 单镜像内包含 Go 后端、Nginx 和前端 Vite preview 服务，并通过 Supervisor 管理多进程。
+Docker Compose 部署相关文件统一放在 `deploy/` 目录下。`zonelease` 单镜像内包含 Go 后端、Nginx 和前端 Nitro SSR 服务，并通过 Supervisor 管理多进程。
 
 仓库内置文件结构：
 
@@ -374,9 +374,9 @@ deploy/
 └── RedisData/            # Redis 数据目录，使用外部 Redis 时可不创建
 ```
 
-镜像构建时会分别生成前端 `dist` 产物和后端二进制；运行时由 Supervisor 同时管理 Go 后端、Nginx 和前端 Vite preview 服务。
+镜像构建时会分别生成前端 `.output` 产物和后端二进制；运行时由 Supervisor 同时管理 Go 后端、Nginx 和前端 Nitro SSR 服务。
 
-运行时会复制前端 `package*.json`、`vite.config.ts`、`tsconfig.json`、`node_modules` 和 `dist` 产物，并在 `/app/frontend` 执行 `npm run preview -- --host 127.0.0.1 --port 5173`。`vite.config.ts` 用于让容器内的 Vite preview 继续加载 TanStack Start 插件和 `dist/server/server.js`，避免退化为只预览 `dist` 静态目录。Nginx 直接托管 `dist/client/assets` 等静态资源，并将 `/api/`、`/api/events` 和 `/swagger/` 反向代理到后端。
+运行时只复制前端 `.output` 产物，并在 `/app/frontend` 执行 `node .output/server/index.mjs`。Nginx 直接托管 `.output/public/assets` 等静态资源，并将 `/api/`、`/api/events` 和 `/swagger/` 反向代理到后端。
 
 ## 3.2 准备配置文件
 
@@ -738,43 +738,40 @@ npm install
 npm run build
 ```
 
-构建产物在 `dist` 目录。当前前端使用 TanStack React Start，构建后会生成 `client/` 与 `server/` 两部分产物，不是传统只包含 `index.html` 的纯静态 SPA：
+构建产物在 `.output` 目录。当前前端使用 TanStack React Start + Nitro，构建后会生成可直接运行的 Node 服务端入口和静态资源目录：
 
-- `dist/client/`：浏览器静态资源，包含 JS、CSS、favicon 等文件；
-- `dist/server/`：React Start 服务端渲染入口，`server.js` 会按访问路由动态返回 HTML；
+- `.output/server/index.mjs`：生产环境 Node SSR 入口；
+- `.output/public/`：浏览器静态资源，包含 JS、CSS、favicon 等文件；
 - 生产环境前端无需单独配置 API 地址，统一通过 Nginx 将 `/api/` 反向代理到后端。
 
-因此生产部署时需要先启动前端预览服务加载 `dist` 产物，再由 Nginx 将页面请求反向代理到该前端服务；不要只把 `dist/client` 配置为 Nginx 静态根目录，否则会因为没有 `index.html` 导致页面无法正常访问。
+因此生产部署时需要先启动 `.output/server/index.mjs`，再由 Nginx 将页面请求反向代理到该前端服务；不要只把 `.output/public` 配置为 Nginx 静态根目录，否则服务端渲染页面无法正常返回。
 
-3. 启动前端预览服务：
+3. 启动前端 SSR 服务：
 
 ```bash
 # 方式1：前台运行（终端关闭则服务停止）
-npm run preview
-# 如果要指定监听端口，可执行例如：
-npm run preview -- --host 127.0.0.1 --port 5173
+HOST=127.0.0.1 PORT=5173 npm run start
 
 # 方式2：后台运行（日志输出到 zonelease-frontend.log）
-nohup npm run preview -- --host 127.0.0.1 --port 5173 > zonelease-frontend.log 2>&1 &
+nohup env HOST=127.0.0.1 PORT=5173 npm run start > zonelease-frontend.log 2>&1 &
 ```
 
 ## 4.4 配置Nginx反向代理
 
-在服务器上准备前端目录（例如 `/data/zonelease/frontend/dist`），**将本地 `dist` 目录中的所有文件和子目录整体上传到该目录**，保持 `client/` 与 `server/` 结构不变，例如：
+在服务器上准备前端目录（例如 `/data/zonelease/frontend/.output`），**将本地 `.output` 目录中的所有文件和子目录整体上传到该目录**，保持 `public/` 与 `server/` 结构不变，例如：
 
 ```bash
-/data/zonelease/frontend/dist/
-├── client/
+/data/zonelease/frontend/.output/
+├── public/
 │   ├── assets/             # 前端浏览器端 JS/CSS 静态资源
 │   └── favicon.svg         # 站点图标
 └── server/
-    ├── assets/             # 服务端渲染依赖的路由和组件产物
-    └── server.js           # React Start 服务端渲染入口
+    └── index.mjs           # Nitro 生产 SSR 入口
 ```
 
-上传完成后，在 `dist` 所属的前端项目目录执行 `npm run preview` 启动前端服务。Nginx 的 `/` 请求应反向代理到该服务，例如下方示例中的 `127.0.0.1:5173`；`/api/`、`/api/events` 和 `/swagger/` 仍反向代理到 Go 后端 `127.0.0.1:8080`。
+上传完成后，在 `.output` 所属的前端项目目录执行 `HOST=127.0.0.1 PORT=5173 npm run start` 启动前端服务。Nginx 的 `/` 请求应反向代理到该服务，例如下方示例中的 `127.0.0.1:5173`；`/api/`、`/api/events` 和 `/swagger/` 仍反向代理到 Go 后端 `127.0.0.1:8080`。
 
-`/assets/` 与 `/favicon.svg` 可以由 Nginx 直接读取 `dist/client` 返回，避免静态资源经过前端 SSR 服务，并可为带 hash 的构建资源启用长期缓存。示例中的 `root /data/zonelease/admin/dist/client;` 请按实际上传目录替换。
+`/assets/` 与 `/favicon.svg` 可以由 Nginx 直接读取 `.output/public` 返回，避免静态资源经过前端 SSR 服务，并可为带 hash 的构建资源启用长期缓存。示例中的 `root /data/zonelease/admin/.output/public;` 请按实际上传目录替换。
 
 ### 4.4.1 HTTP 示例
 
@@ -792,9 +789,9 @@ server {
     access_log /usr/local/nginx/logs/zonelease-access.log;
     error_log /usr/local/nginx/logs/zonelease-error.log warn;
 
-    # 前端静态资源：直接读取 dist/client，避免 JS/CSS 经过 SSR 服务
+    # 前端静态资源：直接读取 .output/public，避免 JS/CSS 经过 SSR 服务
     location ^~ /assets/ {
-        root /data/zonelease/admin/dist/client;
+        root /data/zonelease/admin/.output/public;
         try_files $uri =404;
         access_log off;
         expires 1y;
@@ -803,7 +800,7 @@ server {
 
     # 站点图标
     location = /favicon.svg {
-        root /data/zonelease/admin/dist/client;
+        root /data/zonelease/admin/.output/public;
         try_files $uri =404;
         access_log off;
         expires 7d;
@@ -850,7 +847,7 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
     
-    # 前端 Vite preview 服务
+    # 前端 Nitro SSR 服务
     location / {
         proxy_pass http://127.0.0.1:5173;
         proxy_http_version 1.1;
@@ -904,9 +901,9 @@ server {
     access_log /usr/local/nginx/logs/zonelease-access.log;
     error_log /usr/local/nginx/logs/zonelease-error.log warn;
 
-    # 前端静态资源：直接读取 dist/client，避免 JS/CSS 经过 SSR 服务
+    # 前端静态资源：直接读取 .output/public，避免 JS/CSS 经过 SSR 服务
     location ^~ /assets/ {
-        root /data/zonelease/admin/dist/client;
+        root /data/zonelease/admin/.output/public;
         try_files $uri =404;
         access_log off;
         expires 1y;
@@ -915,7 +912,7 @@ server {
 
     # 站点图标
     location = /favicon.svg {
-        root /data/zonelease/admin/dist/client;
+        root /data/zonelease/admin/.output/public;
         try_files $uri =404;
         access_log off;
         expires 7d;
@@ -962,7 +959,7 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
     
-    # 前端 Vite preview 服务
+    # 前端 Nitro SSR 服务
     location / {
         proxy_pass http://127.0.0.1:5173;
         proxy_http_version 1.1;

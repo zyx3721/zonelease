@@ -47,11 +47,7 @@ RUN if [ -n "$ALPINE_MIRROR" ]; then \
 WORKDIR /app
 
 COPY --from=backend-builder /src/backend/zonelease-backend /app/zonelease-backend
-COPY --from=frontend-builder /src/frontend/package*.json /app/frontend/
-COPY --from=frontend-builder /src/frontend/vite.config.ts /app/frontend/vite.config.ts
-COPY --from=frontend-builder /src/frontend/tsconfig.json /app/frontend/tsconfig.json
-COPY --from=frontend-builder /src/frontend/node_modules /app/frontend/node_modules
-COPY --from=frontend-builder /src/frontend/dist /app/frontend/dist
+COPY --from=frontend-builder /src/frontend/.output /app/frontend/.output
 COPY deploy/nginx.conf /etc/nginx/http.d/default.conf
 COPY deploy/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY deploy/entrypoint.sh /entrypoint.sh
