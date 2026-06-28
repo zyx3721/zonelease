@@ -376,7 +376,7 @@ deploy/
 
 镜像构建时会分别生成前端 `dist` 产物和后端二进制；运行时由 Supervisor 同时管理 Go 后端、Nginx 和前端 Vite preview 服务。
 
-运行时会复制前端 `package*.json`、`node_modules` 和 `dist` 产物，并在 `/app/frontend` 执行 `npm run preview -- --host 127.0.0.1 --port 5173` 加载 React Start 服务端渲染入口。Nginx 直接托管 `dist/client/assets` 等静态资源，并将 `/api/`、`/api/events` 和 `/swagger/` 反向代理到后端。
+运行时会复制前端 `package*.json`、`vite.config.ts`、`tsconfig.json`、`node_modules` 和 `dist` 产物，并在 `/app/frontend` 执行 `npm run preview -- --host 127.0.0.1 --port 5173`。`vite.config.ts` 用于让容器内的 Vite preview 继续加载 TanStack Start 插件和 `dist/server/server.js`，避免退化为只预览 `dist` 静态目录。Nginx 直接托管 `dist/client/assets` 等静态资源，并将 `/api/`、`/api/events` 和 `/swagger/` 反向代理到后端。
 
 ## 3.2 准备配置文件
 

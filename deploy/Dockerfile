@@ -48,6 +48,8 @@ WORKDIR /app
 
 COPY --from=backend-builder /src/backend/zonelease-backend /app/zonelease-backend
 COPY --from=frontend-builder /src/frontend/package*.json /app/frontend/
+COPY --from=frontend-builder /src/frontend/vite.config.ts /app/frontend/vite.config.ts
+COPY --from=frontend-builder /src/frontend/tsconfig.json /app/frontend/tsconfig.json
 COPY --from=frontend-builder /src/frontend/node_modules /app/frontend/node_modules
 COPY --from=frontend-builder /src/frontend/dist /app/frontend/dist
 COPY deploy/nginx.conf /etc/nginx/http.d/default.conf
