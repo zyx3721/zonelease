@@ -154,7 +154,7 @@ zonelease/
 │       ├── server.ts                 # React Start 自定义服务端入口
 │       ├── start.ts                  # React Start 中间件与启动实例配置
 │       └── styles.css                # 全局样式与主题变量
-├── deploy/                           # Docker Compose、Nginx、Supervisor 与容器前端启动器配置
+├── deploy/                           # Docker Compose、Nginx 与 Supervisor 部署配置
 ├── docs/                             # DNS、DHCP、刷新同步等运行链路说明文档
 ├── AGENTS.md                         # 项目开发规范
 ├── LICENSE
@@ -349,7 +349,7 @@ nohup npm run dev > zonelease-frontend.log 2>&1 &
 
 ## 3.1 部署目录结构
 
-Docker Compose 部署相关文件统一放在 `deploy/` 目录下。`zonelease` 单镜像内包含 Go 后端、Nginx、轻量 Node 前端 SSR 服务，并通过 Supervisor 管理多进程。
+Docker Compose 部署相关文件统一放在 `deploy/` 目录下。`zonelease` 单镜像内包含 Go 后端、Nginx 和前端 Vite preview 服务，并通过 Supervisor 管理多进程。
 
 仓库内置文件结构：
 
@@ -358,7 +358,6 @@ deploy/
 ├── Dockerfile            # 多阶段镜像构建：前端构建、后端构建、运行时镜像
 ├── docker-compose.yml    # PostgreSQL、Redis 和 zonelease 服务编排
 ├── entrypoint.sh         # 容器启动入口，交给 Supervisor 拉起各进程
-├── frontend-server.mjs   # 轻量 Node 前端 SSR 启动器，直接加载 dist/server/server.js
 ├── nginx.conf            # 容器内 Nginx 配置，负责静态资源、API、SSE 和页面反代
 ├── supervisord.conf      # 容器内多进程管理配置
 └── .env.example          # 环境变量模板
@@ -375,9 +374,9 @@ deploy/
 └── RedisData/            # Redis 数据目录，使用外部 Redis 时可不创建
 ```
 
-镜像构建时会分别生成前端 `dist` 产物和后端二进制；运行时由 Supervisor 同时管理 Go 后端、Nginx 和轻量 Node 前端服务。
+镜像构建时会分别生成前端 `dist` 产物和后端二进制；运行时由 Supervisor 同时管理 Go 后端、Nginx 和前端 Vite preview 服务。
 
-运行时不复制前端 `node_modules`，也不执行 `npm run preview`。前端页面由 `deploy/frontend-server.mjs` 直接加载 `dist/server/server.js` 处理 React Start 服务端渲染，Nginx 直接托管 `dist/client/assets` 等静态资源，并将 `/api/`、`/api/events` 和 `/swagger/` 反向代理到后端。
+运行时会复制前端 `package*.json`、`node_modules` 和 `dist` 产物，并在 `/app/frontend` 执行 `npm run preview -- --host 127.0.0.1 --port 5173` 加载 React Start 服务端渲染入口。Nginx 直接托管 `dist/client/assets` 等静态资源，并将 `/api/`、`/api/events` 和 `/swagger/` 反向代理到后端。
 
 ## 3.2 准备配置文件
 
