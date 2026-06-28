@@ -179,7 +179,7 @@ func (r *Router) probeServer(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	status, detail := "Online", ""
-	agentCtx, cancel := context.WithTimeout(req.Context(), r.agentOperationTimeout(req.Context()))
+	agentCtx, cancel := context.WithTimeout(req.Context(), r.agentConnectionTimeout(req.Context()))
 	defer cancel()
 	if err := r.agent.Validate(agentCtx, body.AgentURL, body.APIKey, body.Role, body.TLSInsecure); err != nil {
 		status, detail = "Offline", agent.UserFacingErrorMessage(err)
@@ -235,7 +235,7 @@ func (r *Router) serverAction(w http.ResponseWriter, req *http.Request) {
 		if !r.ensureAgentNotSyncing(w, req, server) {
 			return
 		}
-		task, err := r.enqueueServerRefresh(server.ID, server.Name, currentUser(req).ID)
+		task, err := r.enqueueServerRefresh(server.ID, server.Name, currentUser(req).ID, req.URL.Query().Get("skipHealthCheck") == "1")
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "sync_server_failed", "创建 Agent 同步任务失败")
 			return
@@ -246,7 +246,7 @@ func (r *Router) serverAction(w http.ResponseWriter, req *http.Request) {
 	}
 	status, detail := "Online", ""
 	started := time.Now()
-	agentCtx, cancel := context.WithTimeout(req.Context(), r.agentOperationTimeout(req.Context()))
+	agentCtx, cancel := context.WithTimeout(req.Context(), r.agentConnectionTimeout(req.Context()))
 	defer cancel()
 	if err := r.agent.Validate(agentCtx, server.AgentURL, server.APIKey, server.Role, server.TLSInsecure); err != nil {
 		status, detail = "Offline", agent.UserFacingErrorMessage(err)

@@ -196,3 +196,14 @@ func TestRefreshTaskPayloadKeepsDHCPScopeExternalIDInternalOnly(t *testing.T) {
 		t.Fatalf("expected scopeExternalId to stay out of task payload, got %v", payload["scopeExternalId"])
 	}
 }
+
+func TestAgentSyncExecutionTTLIncludesHealthAndSyncTimeout(t *testing.T) {
+	got := agentSyncExecutionTTL(runtimeLimits{
+		AgentConnectionTimeout: 5 * time.Second,
+		AgentFullSyncTimeout:   5 * time.Minute,
+	})
+	want := 6*time.Minute + 5*time.Second
+	if got != want {
+		t.Fatalf("unexpected agent sync execution ttl: got %s, want %s", got, want)
+	}
+}

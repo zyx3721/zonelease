@@ -34,6 +34,11 @@ func (p *fakeProvider) ListScopes(context.Context) ([]dhcp.Scope, error) {
 	return []dhcp.Scope{{ID: "10.24.0.0", Name: "Office"}}, nil
 }
 
+func (p *fakeProvider) GetScope(_ context.Context, scopeID string) (dhcp.Scope, error) {
+	p.scopeID = scopeID
+	return dhcp.Scope{ID: scopeID, Name: "Office"}, nil
+}
+
 func (p *fakeProvider) CreateScope(_ context.Context, scope dhcp.Scope) (dhcp.Scope, error) {
 	p.scopeID = scope.ID
 	p.scope = scope
@@ -55,6 +60,15 @@ func (p *fakeProvider) SetScopeState(_ context.Context, scopeID string, active b
 func (p *fakeProvider) DeleteScope(_ context.Context, scopeID string) error {
 	p.scopeID = scopeID
 	return nil
+}
+
+func (p *fakeProvider) ListScopeDetails(_ context.Context, scopeID string) (dhcp.ScopeDetails, error) {
+	p.scopeID = scopeID
+	return dhcp.ScopeDetails{
+		Exclusions:   []dhcp.Exclusion{{ID: scopeID + "|10.24.0.30|10.24.0.40", ScopeID: scopeID, StartIP: "10.24.0.30", EndIP: "10.24.0.40"}},
+		Leases:       []dhcp.Lease{{ID: scopeID + "|10.24.0.10", ScopeID: scopeID, IP: "10.24.0.10"}},
+		Reservations: []dhcp.Reservation{{ID: scopeID + "|10.24.0.20", ScopeID: scopeID, IP: "10.24.0.20"}},
+	}, nil
 }
 
 func (p *fakeProvider) ListExclusions(_ context.Context, scopeID string) ([]dhcp.Exclusion, error) {
@@ -113,6 +127,48 @@ func TestListLeasesRouteUsesScopeIDFromPath(t *testing.T) {
 	}
 	if provider.scopeID != "10.24.0.0" {
 		t.Fatalf("unexpected scope id: %s", provider.scopeID)
+	}
+}
+
+func TestGetScopeRouteUsesScopeIDFromPath(t *testing.T) {
+	provider := &fakeProvider{}
+	recorder := executeAgentRequest(t, provider, http.MethodGet, "/dhcp/scopes/10.24.0.0", nil, "secret")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", recorder.Code)
+	}
+	if provider.scopeID != "10.24.0.0" {
+		t.Fatalf("unexpected scope id: %s", provider.scopeID)
+	}
+	var body struct {
+		Success bool       `json:"success"`
+		Data    dhcp.Scope `json:"data"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Success || body.Data.ID != "10.24.0.0" {
+		t.Fatalf("unexpected scope body: %+v", body)
+	}
+}
+
+func TestListScopeDetailsRouteUsesScopeIDFromPath(t *testing.T) {
+	provider := &fakeProvider{}
+	recorder := executeAgentRequest(t, provider, http.MethodGet, "/dhcp/scopes/10.24.0.0/details", nil, "secret")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", recorder.Code)
+	}
+	if provider.scopeID != "10.24.0.0" {
+		t.Fatalf("unexpected scope id: %s", provider.scopeID)
+	}
+	var body struct {
+		Success bool              `json:"success"`
+		Data    dhcp.ScopeDetails `json:"data"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Success || len(body.Data.Leases) != 1 || len(body.Data.Reservations) != 1 || len(body.Data.Exclusions) != 1 {
+		t.Fatalf("unexpected details body: %+v", body)
 	}
 }
 

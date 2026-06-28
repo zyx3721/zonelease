@@ -2207,6 +2207,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "传 1 时跳过同步前 /health 预检查，仅用于保存后已测试通过的首次自动同步",
+                        "name": "skipHealthCheck",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -5080,6 +5086,9 @@ const docTemplate = `{
         "router.systemBaseConfigResponse": {
             "type": "object",
             "properties": {
+                "agentConnectionTimeoutSeconds": {
+                    "type": "integer"
+                },
                 "agentFullSyncTimeoutSeconds": {
                     "type": "integer"
                 },

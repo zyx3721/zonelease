@@ -53,6 +53,7 @@ type runtimeLimits struct {
 	DHCPScopeConcurrency     int
 	AgentOfflineFailureCount int
 	AgentHealthConcurrency   int
+	AgentConnectionTimeout   time.Duration
 	AgentOperationTimeout    time.Duration
 	AgentFullSyncTimeout     time.Duration
 }
@@ -65,8 +66,9 @@ type ZoneTarget struct {
 }
 
 type ServerTarget struct {
-	ServerID   string `json:"serverId"`
-	ServerName string `json:"serverName,omitempty"`
+	ServerID        string `json:"serverId"`
+	ServerName      string `json:"serverName,omitempty"`
+	SkipHealthCheck bool   `json:"-"`
 }
 
 type DHCPScopeTarget struct {
@@ -225,7 +227,7 @@ func (s *Service) checkAllServerHealth(ctx context.Context) {
 		}
 		targets = append(targets, server)
 	}
-	lockTTL := limits.AgentOperationTimeout*time.Duration(maxPositive(len(targets), 1)) + time.Minute
+	lockTTL := limits.AgentConnectionTimeout*time.Duration(maxPositive(len(targets), 1)) + time.Minute
 	lock, locked, err := s.realtime.TryLock(ctx, agentHealthCheckLockKey, lockTTL)
 	if err != nil {
 		s.logger.Warn("Acquire agent health check lock failed", "error", err)
@@ -278,7 +280,7 @@ func (s *Service) checkServerHealth(ctx context.Context, server domain.Server, l
 	status := "Online"
 	detail := ""
 	started := time.Now()
-	agentCtx, cancel := context.WithTimeout(ctx, limits.AgentOperationTimeout)
+	agentCtx, cancel := context.WithTimeout(ctx, limits.AgentConnectionTimeout)
 	defer cancel()
 	if err := s.agent.Health(agentCtx, server.AgentURL, server.APIKey, server.TLSInsecure); err != nil {
 		status = "Offline"
@@ -385,7 +387,7 @@ func (s *Service) RunRefreshTask(ctx context.Context, taskID, taskType string, t
 			server, err = s.store.GetServer(ctx, serverTarget.ServerID)
 			if err == nil {
 				serverTarget.ServerName = server.Name
-				err = s.SyncServer(ctx, server)
+				err = s.syncServerTarget(ctx, server, serverTarget)
 			}
 		}
 	case RefreshDNSZoneType:
@@ -677,14 +679,16 @@ func (s *Service) SyncServer(ctx context.Context, server domain.Server) error {
 }
 
 func (s *Service) syncServer(ctx context.Context, server domain.Server) error {
-	limits := s.runtimeLimits(ctx)
-	agentCtx, cancel := context.WithTimeout(ctx, limits.AgentFullSyncTimeout)
-	defer cancel()
-	return s.syncServerWithLimits(agentCtx, server, limits)
+	return s.syncServerTarget(ctx, server, nil)
 }
 
-func (s *Service) syncServerWithLimits(ctx context.Context, server domain.Server, limits runtimeLimits) error {
-	lockTTL := limits.AgentFullSyncTimeout + time.Minute
+func (s *Service) syncServerTarget(ctx context.Context, server domain.Server, target *ServerTarget) error {
+	limits := s.runtimeLimits(ctx)
+	return s.syncServerWithLimits(ctx, server, limits, target)
+}
+
+func (s *Service) syncServerWithLimits(ctx context.Context, server domain.Server, limits runtimeLimits, target *ServerTarget) error {
+	lockTTL := agentSyncExecutionTTL(limits)
 	lock, locked, err := s.realtime.TryLock(ctx, agentSyncLockKey(server.ID), lockTTL)
 	if err != nil {
 		s.logger.Warn("Acquire agent sync lock failed", "server", server.ID, "error", err)
@@ -703,15 +707,30 @@ func (s *Service) syncServerWithLimits(ctx context.Context, server domain.Server
 
 	status := "Online"
 	started := time.Now()
-	if err := s.agent.Health(ctx, server.AgentURL, server.APIKey, server.TLSInsecure); err != nil {
-		status = "Offline"
-		if healthUpdate, updateErr := s.store.UpdateServerHealth(ctx, server.ID, status, limits.AgentOfflineFailureCount); updateErr == nil && healthUpdate.BecameOffline() {
-			s.cacheAgentHealth(ctx, server, status, err.Error(), healthUpdate.FailureCount, time.Since(started))
-			s.notifyAgentOffline(ctx, server, err.Error())
-		} else if updateErr == nil {
-			s.cacheAgentHealth(ctx, server, status, err.Error(), healthUpdate.FailureCount, time.Since(started))
+	if !skipServerHealthCheck(target) {
+		healthCtx, healthCancel := context.WithTimeout(ctx, limits.AgentConnectionTimeout)
+		if err := s.agent.Health(healthCtx, server.AgentURL, server.APIKey, server.TLSInsecure); err != nil {
+			healthCancel()
+			status = "Offline"
+			detail := agent.UserFacingErrorMessage(err)
+			offlineFailureLimit := limits.AgentOfflineFailureCount
+			if isManualServerSync(target) {
+				offlineFailureLimit = 1
+			}
+			if healthUpdate, updateErr := s.store.UpdateServerHealth(ctx, server.ID, status, offlineFailureLimit); updateErr == nil && healthUpdate.BecameOffline() {
+				s.cacheAgentHealth(ctx, server, status, detail, healthUpdate.FailureCount, time.Since(started))
+				s.notifyAgentOffline(ctx, server, detail)
+				_ = s.publish(ctx, "runtime.updated", "", "success", "运行态已更新")
+			} else if updateErr == nil {
+				s.cacheAgentHealth(ctx, server, status, detail, healthUpdate.FailureCount, time.Since(started))
+				if isManualServerSync(target) {
+					s.notifyAgentOffline(ctx, server, detail)
+					_ = s.publish(ctx, "runtime.updated", "", "success", "运行态已更新")
+				}
+			}
+			return errors.New(detail)
 		}
-		return err
+		healthCancel()
 	}
 	if healthUpdate, updateErr := s.store.UpdateServerHealth(ctx, server.ID, status, limits.AgentOfflineFailureCount); updateErr == nil {
 		s.cacheAgentHealth(ctx, server, status, "", healthUpdate.FailureCount, time.Since(started))
@@ -728,13 +747,15 @@ func (s *Service) syncServerWithLimits(ctx context.Context, server domain.Server
 	if !syncDNSRole && !syncDHCPRole {
 		return fmt.Errorf("unsupported agent role: %s", strings.TrimSpace(server.Role))
 	}
+	syncCtx, syncCancel := context.WithTimeout(ctx, limits.AgentFullSyncTimeout)
+	defer syncCancel()
 	if syncDNSRole {
-		if err := s.syncDNS(ctx, server, limits); err != nil {
+		if err := s.syncDNS(syncCtx, server, limits); err != nil {
 			errs = append(errs, "dns: "+err.Error())
 		}
 	}
 	if syncDHCPRole {
-		if err := s.syncDHCP(ctx, server, limits); err != nil {
+		if err := s.syncDHCP(syncCtx, server, limits); err != nil {
 			errs = append(errs, "dhcp: "+err.Error())
 		}
 	}
@@ -742,6 +763,16 @@ func (s *Service) syncServerWithLimits(ctx context.Context, server domain.Server
 		return errors.New(strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+func skipServerHealthCheck(target any) bool {
+	serverTarget, ok := target.(*ServerTarget)
+	return ok && serverTarget != nil && serverTarget.SkipHealthCheck
+}
+
+func isManualServerSync(target any) bool {
+	serverTarget, ok := target.(*ServerTarget)
+	return ok && serverTarget != nil && !serverTarget.SkipHealthCheck
 }
 
 func isAgentSyncRunningError(err error) bool {
@@ -783,6 +814,10 @@ func (s *Service) clearAgentSyncRunning(ctx context.Context, serverID string) {
 
 func (s *Service) IsAgentSyncRunning(ctx context.Context, serverID string) bool {
 	return s.isAgentSyncRunning(ctx, serverID)
+}
+
+func (s *Service) MarkAgentSyncQueued(ctx context.Context, server domain.Server) {
+	s.markAgentSyncRunning(ctx, server, agentSyncExecutionTTL(s.runtimeLimits(ctx)))
 }
 
 func (s *Service) isAgentSyncRunning(ctx context.Context, serverID string) bool {
@@ -987,18 +1022,12 @@ func (s *Service) syncDHCPScope(ctx context.Context, server domain.Server, scope
 		return s.store.ReplaceDHCPScopeSnapshot(ctx, server.ID, target, exclusions, leases, reservations)
 	}
 
-	var scopes []domain.DHCPScope
-	if err := s.agent.Get(ctx, server.AgentURL, server.APIKey, "/dhcp/scopes", &scopes, server.TLSInsecure); err != nil {
-		return err
-	}
-	var target domain.DHCPScope
-	for _, scope := range scopes {
-		scope.ServerID = server.ID
-		scope.ExternalID = strutil.FirstNonEmpty(scope.ExternalID, scope.ID, scope.Subnet)
-		if scope.ExternalID == scopeExternalID {
-			target = scope
-			break
+	target, err := s.fetchDHCPScope(ctx, server, scopeExternalID)
+	if err != nil {
+		if agentNotFound(err) {
+			return s.store.DeleteDHCPScopeByExternalID(ctx, server.ID, scopeExternalID)
 		}
+		return err
 	}
 	if strings.TrimSpace(target.ExternalID) == "" {
 		return s.store.DeleteDHCPScopeByExternalID(ctx, server.ID, scopeExternalID)
@@ -1008,6 +1037,17 @@ func (s *Service) syncDHCPScope(ctx context.Context, server domain.Server, scope
 		return err
 	}
 	return s.store.ReplaceDHCPScopeSnapshot(ctx, server.ID, target, exclusions, leases, reservations)
+}
+
+func (s *Service) fetchDHCPScope(ctx context.Context, server domain.Server, scopeExternalID string) (domain.DHCPScope, error) {
+	var scope domain.DHCPScope
+	path := "/dhcp/scopes/" + url.PathEscape(scopeExternalID)
+	if err := s.agent.Get(ctx, server.AgentURL, server.APIKey, path, &scope, server.TLSInsecure); err != nil {
+		return domain.DHCPScope{}, err
+	}
+	scope.ServerID = server.ID
+	scope.ExternalID = strutil.FirstNonEmpty(scope.ExternalID, scope.ID, scope.Subnet)
+	return scope, nil
 }
 
 func (s *Service) fetchLegacyDHCPScope(ctx context.Context, server domain.Server, scopeExternalID string) (domain.DHCPScope, error) {
@@ -1023,15 +1063,25 @@ func (s *Service) fetchLegacyDHCPScope(ctx context.Context, server domain.Server
 
 func (s *Service) fetchDHCPScopeDetails(ctx context.Context, server domain.Server, scopeExternalID string, legacyAgent bool) ([]domain.DHCPExclusion, []domain.DHCPLease, []domain.DHCPReservation, error) {
 	if legacyAgent {
-		return s.fetchLegacyDHCPScopeDetails(ctx, server, scopeExternalID)
+		return s.fetchDHCPScopeDetailsEndpoint(ctx, server, scopeExternalID)
 	}
+	exclusions, leases, reservations, err := s.fetchDHCPScopeDetailsEndpoint(ctx, server, scopeExternalID)
+	if err == nil {
+		return exclusions, leases, reservations, nil
+	}
+	if !agentNotFound(err) {
+		return nil, nil, nil, err
+	}
+	return s.fetchDHCPScopeDetailsSplit(ctx, server, scopeExternalID)
+}
+
+func (s *Service) fetchDHCPScopeDetailsSplit(ctx context.Context, server domain.Server, scopeExternalID string) ([]domain.DHCPExclusion, []domain.DHCPLease, []domain.DHCPReservation, error) {
 	var exclusions []domain.DHCPExclusion
 	exclusionPath := "/dhcp/scopes/" + url.PathEscape(scopeExternalID) + "/exclusions"
 	var leases []domain.DHCPLease
 	path := "/dhcp/scopes/" + url.PathEscape(scopeExternalID) + "/leases"
 	var reservations []domain.DHCPReservation
 	reservationPath := "/dhcp/scopes/" + url.PathEscape(scopeExternalID) + "/reservations"
-
 	var wg stdsync.WaitGroup
 	var exclusionErr error
 	var leaseErr error
@@ -1075,7 +1125,7 @@ func (s *Service) fetchDHCPScopeDetails(ctx context.Context, server domain.Serve
 	return exclusions, leases, reservations, nil
 }
 
-func (s *Service) fetchLegacyDHCPScopeDetails(ctx context.Context, server domain.Server, scopeExternalID string) ([]domain.DHCPExclusion, []domain.DHCPLease, []domain.DHCPReservation, error) {
+func (s *Service) fetchDHCPScopeDetailsEndpoint(ctx context.Context, server domain.Server, scopeExternalID string) ([]domain.DHCPExclusion, []domain.DHCPLease, []domain.DHCPReservation, error) {
 	var detail struct {
 		Exclusions   []domain.DHCPExclusion   `json:"exclusions"`
 		Leases       []domain.DHCPLease       `json:"leases"`
@@ -1157,6 +1207,7 @@ func (s *Service) runtimeLimits(ctx context.Context) runtimeLimits {
 		DHCPScopeConcurrency:     defaults.DHCPScopeConcurrency,
 		AgentOfflineFailureCount: defaults.AgentOfflineFailureCount,
 		AgentHealthConcurrency:   defaults.AgentHealthCheckConcurrency,
+		AgentConnectionTimeout:   time.Duration(defaults.AgentConnectionTimeoutSeconds) * time.Second,
 		AgentOperationTimeout:    time.Duration(defaults.AgentOperationTimeoutSeconds) * time.Second,
 		AgentFullSyncTimeout:     time.Duration(defaults.AgentFullSyncTimeoutSeconds) * time.Second,
 	}
@@ -1170,6 +1221,7 @@ func (s *Service) runtimeLimits(ctx context.Context) runtimeLimits {
 	limits.DHCPScopeConcurrency = base.DHCPScopeConcurrency
 	limits.AgentOfflineFailureCount = base.AgentOfflineFailureCount
 	limits.AgentHealthConcurrency = base.AgentHealthCheckConcurrency
+	limits.AgentConnectionTimeout = time.Duration(base.AgentConnectionTimeoutSeconds) * time.Second
 	limits.AgentOperationTimeout = time.Duration(base.AgentOperationTimeoutSeconds) * time.Second
 	limits.AgentFullSyncTimeout = time.Duration(base.AgentFullSyncTimeoutSeconds) * time.Second
 	return limits
@@ -1187,11 +1239,15 @@ func (s *Service) healthCheckInterval(ctx context.Context) time.Duration {
 }
 
 func (s *Service) refreshTaskLockTTL(ctx context.Context) time.Duration {
-	ttl := s.runtimeLimits(ctx).AgentFullSyncTimeout + time.Minute
+	ttl := agentSyncExecutionTTL(s.runtimeLimits(ctx))
 	if ttl <= time.Minute {
 		return 2 * time.Minute
 	}
 	return ttl
+}
+
+func agentSyncExecutionTTL(limits runtimeLimits) time.Duration {
+	return limits.AgentConnectionTimeout + limits.AgentFullSyncTimeout + time.Minute
 }
 
 func RefreshTaskLockKey(taskType string, target any) string {

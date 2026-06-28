@@ -282,6 +282,7 @@ func swaggerPingServer() {}
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "服务器 ID"
+// @Param skipHealthCheck query string false "传 1 时跳过同步前 /health 预检查，仅用于保存后已测试通过的首次自动同步"
 // @Success 202 {object} refreshTaskResponse
 // @Failure 401 {object} errorDocResponse
 // @Failure 403 {object} errorDocResponse

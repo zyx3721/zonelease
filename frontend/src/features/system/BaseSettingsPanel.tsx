@@ -529,6 +529,7 @@ function pickTabPatch(config: SystemBaseConfig, tab: BaseTab): Partial<SystemBas
   }
   return {
     agentOfflineFailureCount: config.agentOfflineFailureCount,
+    agentConnectionTimeoutSeconds: config.agentConnectionTimeoutSeconds,
     agentOperationTimeoutSeconds: config.agentOperationTimeoutSeconds,
     agentFullSyncTimeoutSeconds: config.agentFullSyncTimeoutSeconds,
     agentHealthCheckIntervalMinutes: config.agentHealthCheckIntervalMinutes,

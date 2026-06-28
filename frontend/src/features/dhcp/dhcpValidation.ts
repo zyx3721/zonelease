@@ -48,7 +48,7 @@ export function validateSubnetRange(subnet: string, startRange: string, endRange
   if (start === null || end === null) return '地址范围必须是有效的 IPv4 地址';
   if (start > end) return '起始 IP 地址不能大于结束 IP 地址';
   const parsedSubnet = parseSubnet(subnet);
-  if (!parsedSubnet) return '子网必须是有效的 IPv4 CIDR 或子网掩码格式';
+  if (!parsedSubnet) return '子网必须是有效的 IPv4 CIDR';
   const { network, broadcast, mask } = parsedSubnet;
   if ((start & mask) !== network || (end & mask) !== network) {
     return '地址范围必须在当前作用域子网内';
@@ -65,7 +65,7 @@ export function validateDefaultGateway(subnet: string, defaultGateway: string) {
   const gatewayIP = parseIPv4(gateway);
   if (gatewayIP === null) return '默认网关必须是有效的 IPv4 地址';
   const parsedSubnet = parseSubnet(subnet);
-  if (!parsedSubnet) return '子网必须是有效的 IPv4 CIDR 或子网掩码格式';
+  if (!parsedSubnet) return '子网必须是有效的 IPv4 CIDR';
   const { network, broadcast, mask } = parsedSubnet;
   if ((gatewayIP & mask) !== network) return '默认网关必须在当前作用域子网内';
   if (gatewayIP <= network || gatewayIP >= broadcast) return '默认网关不能是子网地址或广播地址';
@@ -77,7 +77,7 @@ export function validateScopeSubnetConflict(
   existingScopes: Array<{ subnet: string }>
 ) {
   const nextSubnet = parseSubnet(subnet);
-  if (!nextSubnet) return '子网必须是有效的 IPv4 CIDR 或子网掩码格式';
+  if (!nextSubnet) return '子网必须是有效的 IPv4 CIDR';
   const nextStart = nextSubnet.network;
   const nextEnd = nextSubnet.broadcast;
   const hasConflict = existingScopes.some(scope => {
@@ -131,8 +131,6 @@ function parseSubnet(subnet: string) {
     const prefix = Number(maskText);
     if (prefix < 0 || prefix > 32) return null;
     mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
-  } else {
-    mask = parseIPv4(maskText);
   }
   if (mask === null) return null;
   const network = (networkIP & mask) >>> 0;

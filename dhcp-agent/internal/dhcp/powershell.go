@@ -43,8 +43,18 @@ func (p *PowerShellProvider) ListScopes(ctx context.Context) ([]Scope, error) {
 	return scopes, runJSON(ctx, script, &scopes)
 }
 
-func (p *PowerShellProvider) listScopesScript() string {
-	return `
+func (p *PowerShellProvider) GetScope(ctx context.Context, scopeID string) (Scope, error) {
+	scopeID = strings.TrimSpace(scopeID)
+	if net.ParseIP(scopeID).To4() == nil {
+		return Scope{}, fmt.Errorf("scope id must be an IPv4 address")
+	}
+	script := p.getScopeScript(scopeID)
+	var scope Scope
+	return scope, runJSON(ctx, script, &scope)
+}
+
+func (p *PowerShellProvider) getScopeScript(scopeID string) string {
+	return fmt.Sprintf(`
 Import-Module DhcpServer -ErrorAction Stop
 function Get-TextValue {
   param([object]$Value)
@@ -54,6 +64,8 @@ function Get-TextValue {
 function Get-LeaseDurationSeconds {
   param([object]$Value)
   if ($null -eq $Value) { return 0 }
+  $text = Get-TextValue $Value
+  if ($text -match '^\s*10675199') { return -1 }
   try { return [int][Math]::Round($Value.TotalSeconds) } catch { return 0 }
 }
 function Get-DefaultGateway {
@@ -66,16 +78,98 @@ function Get-DefaultGateway {
     return Get-TextValue $values[0]
   } catch { return "" }
 }
+function Convert-MaskToPrefix {
+  param([object]$Mask)
+  $bytes = [System.Net.IPAddress]::Parse((Get-TextValue $Mask)).GetAddressBytes()
+  $prefix = 0
+  $seenZero = $false
+  foreach ($byte in $bytes) {
+    for ($i = 7; $i -ge 0; $i--) {
+      $bit = ($byte -band (1 -shl $i))
+      if ($bit -ne 0) {
+        if ($seenZero) { throw "scope subnet mask must be contiguous" }
+        $prefix++
+      } else {
+        $seenZero = $true
+      }
+    }
+  }
+  return [string]$prefix
+}
+$scope = Get-DhcpServerv4Scope -ScopeId %s -ErrorAction Stop
+$leaseDurationSeconds = Get-LeaseDurationSeconds $scope.LeaseDuration
+$scopeId = Get-TextValue $scope.ScopeId
+$prefix = Convert-MaskToPrefix $scope.SubnetMask
+[PSCustomObject]@{
+  id = $scopeId
+  name = Get-TextValue $scope.Name
+  description = Get-TextValue $scope.Description
+  subnet = "$scopeId/$prefix"
+  defaultGateway = Get-DefaultGateway $scope.ScopeId
+  startRange = Get-TextValue $scope.StartRange
+  endRange = Get-TextValue $scope.EndRange
+  leaseDurationHours = if ($leaseDurationSeconds -gt 0) { [int][Math]::Ceiling($leaseDurationSeconds / 3600) } else { 0 }
+  leaseDurationSeconds = $leaseDurationSeconds
+  state = if ($scope.State -eq "Active") { "Active" } else { "Inactive" }
+  serverId = "local"
+} | ConvertTo-Json -Depth 8
+`, psString(scopeID))
+}
+
+func (p *PowerShellProvider) listScopesScript() string {
+	return `
+Import-Module DhcpServer -ErrorAction Stop
+function Get-TextValue {
+  param([object]$Value)
+  if ($null -eq $Value) { return "" }
+  return [string]$Value
+}
+function Get-LeaseDurationSeconds {
+  param([object]$Value)
+  if ($null -eq $Value) { return 0 }
+  $text = Get-TextValue $Value
+  if ($text -match '^\s*10675199') { return -1 }
+  try { return [int][Math]::Round($Value.TotalSeconds) } catch { return 0 }
+}
+function Get-DefaultGateway {
+  param([object]$ScopeId)
+  try {
+    $value = Get-DhcpServerv4OptionValue -ScopeId $ScopeId -OptionId 3 -ErrorAction Stop
+    if ($null -eq $value -or $null -eq $value.Value) { return "" }
+    $values = @($value.Value)
+    if ($values.Count -eq 0) { return "" }
+    return Get-TextValue $values[0]
+  } catch { return "" }
+}
+function Convert-MaskToPrefix {
+  param([object]$Mask)
+  $bytes = [System.Net.IPAddress]::Parse((Get-TextValue $Mask)).GetAddressBytes()
+  $prefix = 0
+  $seenZero = $false
+  foreach ($byte in $bytes) {
+    for ($i = 7; $i -ge 0; $i--) {
+      $bit = ($byte -band (1 -shl $i))
+      if ($bit -ne 0) {
+        if ($seenZero) { throw "scope subnet mask must be contiguous" }
+        $prefix++
+      } else {
+        $seenZero = $true
+      }
+    }
+  }
+  return [string]$prefix
+}
 $items = New-Object System.Collections.ArrayList
 foreach ($scope in @(Get-DhcpServerv4Scope -ErrorAction Stop)) {
   try {
     $leaseDurationSeconds = Get-LeaseDurationSeconds $scope.LeaseDuration
     $scopeId = Get-TextValue $scope.ScopeId
+    $prefix = Convert-MaskToPrefix $scope.SubnetMask
     [void]$items.Add([PSCustomObject]@{
       id = $scopeId
       name = Get-TextValue $scope.Name
       description = Get-TextValue $scope.Description
-      subnet = "$scopeId/$(Get-TextValue $scope.SubnetMask)"
+      subnet = "$scopeId/$prefix"
       defaultGateway = Get-DefaultGateway $scope.ScopeId
       startRange = Get-TextValue $scope.StartRange
       endRange = Get-TextValue $scope.EndRange
@@ -105,9 +199,13 @@ func (p *PowerShellProvider) createScopeScript(scope Scope) (Scope, string, erro
 	if err != nil {
 		return Scope{}, "", err
 	}
-	leaseDurationArg := fmt.Sprintf("-LeaseDuration (New-TimeSpan -Hours %d) ", scope.LeaseDurationHours)
+	leaseDurationArg := ""
+	unlimitedLeaseScript := ""
 	if scope.LeaseDurationSeconds == -1 {
 		leaseDurationArg = ""
+		unlimitedLeaseScript = "\n" + setUnlimitedLeaseDurationCommand(scope.ID)
+	} else if scope.LeaseDurationSeconds > 0 {
+		leaseDurationArg = fmt.Sprintf("-LeaseDuration (New-TimeSpan -Seconds %d) ", scope.LeaseDurationSeconds)
 	}
 	descriptionArg := ""
 	if strings.TrimSpace(scope.Description) != "" {
@@ -121,14 +219,26 @@ func (p *PowerShellProvider) createScopeScript(scope Scope) (Scope, string, erro
 Import-Module DhcpServer -ErrorAction Stop
 Add-DhcpServerv4Scope -Name %s -StartRange %s -EndRange %s -SubnetMask %s %s%s-State Active -ErrorAction Stop | Out-Null
 %s
-`, psString(scope.Name), psString(scope.StartRange), psString(scope.EndRange), psString(subnetMask), descriptionArg, leaseDurationArg, defaultGatewayScript)
+%s
+`, psString(scope.Name), psString(scope.StartRange), psString(scope.EndRange), psString(subnetMask), descriptionArg, leaseDurationArg, defaultGatewayScript, unlimitedLeaseScript)
 	return scope, script, nil
 }
 
 func (p *PowerShellProvider) UpdateScope(ctx context.Context, scope Scope) (Scope, error) {
-	scope, scopeID, err := normalizeScopeUpdate(scope)
+	scope, script, err := p.updateScopeScript(scope)
 	if err != nil {
 		return Scope{}, err
+	}
+	if script == "" {
+		return scope, nil
+	}
+	return scope, run(ctx, script)
+}
+
+func (p *PowerShellProvider) updateScopeScript(scope Scope) (Scope, string, error) {
+	scope, scopeID, err := normalizeScopeUpdate(scope)
+	if err != nil {
+		return Scope{}, "", err
 	}
 	changed := scopeChangedSet(scope.ChangedFields)
 	if len(changed) == 0 {
@@ -139,7 +249,9 @@ func (p *PowerShellProvider) UpdateScope(ctx context.Context, scope Scope) (Scop
 		changed["range"] = true
 		changed["state"] = true
 	}
+	commands := []string{"Import-Module DhcpServer -ErrorAction Stop"}
 	args := []string{"-ScopeId " + psString(scopeID)}
+	setUnlimitedLeaseDuration := false
 	if changed["name"] {
 		args = append(args, "-Name "+psString(scope.Name))
 	}
@@ -148,7 +260,7 @@ func (p *PowerShellProvider) UpdateScope(ctx context.Context, scope Scope) (Scop
 	}
 	if changed["lease"] {
 		if scope.LeaseDurationSeconds == -1 {
-			args = append(args, "-LeaseDuration (New-TimeSpan -Seconds 4294967295)")
+			setUnlimitedLeaseDuration = true
 		} else {
 			leaseSeconds := scope.LeaseDurationSeconds
 			if leaseSeconds <= 0 {
@@ -163,18 +275,24 @@ func (p *PowerShellProvider) UpdateScope(ctx context.Context, scope Scope) (Scop
 	if changed["range"] && scope.StartRange != "" && scope.EndRange != "" {
 		args = append(args, "-StartRange "+psString(scope.StartRange), "-EndRange "+psString(scope.EndRange))
 	}
-	commands := []string{"Import-Module DhcpServer -ErrorAction Stop"}
 	if len(args) > 1 {
 		commands = append(commands, "Set-DhcpServerv4Scope "+strings.Join(args, " ")+" -ErrorAction Stop")
+	}
+	if setUnlimitedLeaseDuration {
+		commands = append(commands, setUnlimitedLeaseDurationCommand(scopeID))
 	}
 	if changed["gateway"] {
 		commands = append(commands, "Set-DhcpServerv4OptionValue -ScopeId "+psString(scopeID)+" -Router "+psString(scope.DefaultGateway)+" -ErrorAction Stop")
 	}
 	if len(commands) == 1 {
-		return scope, nil
+		return scope, "", nil
 	}
 	script := strings.Join(commands, "\n")
-	return scope, run(ctx, script)
+	return scope, script, nil
+}
+
+func setUnlimitedLeaseDurationCommand(scopeID string) string {
+	return "Set-DhcpServerv4OptionValue -ScopeId " + psString(scopeID) + " -OptionId 51 -Value 4294967295 -ErrorAction Stop"
 }
 
 func scopeChangedSet(fields []string) map[string]bool {
@@ -208,6 +326,114 @@ func (p *PowerShellProvider) DeleteScope(ctx context.Context, scopeID string) er
 	}
 	return run(ctx, fmt.Sprintf(`Import-Module DhcpServer -ErrorAction Stop
 Remove-DhcpServerv4Scope -ScopeId %s -Force -ErrorAction Stop`, psString(scopeID)))
+}
+
+func (p *PowerShellProvider) ListScopeDetails(ctx context.Context, scopeID string) (ScopeDetails, error) {
+	script := p.listScopeDetailsScript(scopeID)
+	var details ScopeDetails
+	return details, runJSON(ctx, script, &details)
+}
+
+func (p *PowerShellProvider) listScopeDetailsScript(scopeID string) string {
+	return fmt.Sprintf(`
+Import-Module DhcpServer -ErrorAction Stop
+$scopeId = %s
+function Get-TextValue {
+  param([object]$Value)
+  if ($null -eq $Value) { return "" }
+  return [string]$Value
+}
+function Get-IsoTime {
+  param([object]$Value)
+  if ($null -eq $Value) { return "" }
+  try { return $Value.ToString("o") } catch { return "" }
+}
+function Get-MacValue {
+  param([object]$Value)
+  return (Get-TextValue $Value).Trim().Replace("-", "").Replace(":", "").Replace(".", "").ToLowerInvariant()
+}
+function Get-LeaseState {
+  param([object]$Value)
+  $state = (Get-TextValue $Value).Trim()
+  $normalized = $state.Replace(" ", "").Replace("_", "").Replace("-", "").ToLowerInvariant()
+  if ($normalized -eq "reservedinactive" -or $normalized -eq "inactivereservation" -or $normalized -eq "reservationinactive") { return "ReservedInactive" }
+  if ($normalized -eq "reservedactive" -or $normalized -eq "activereservation" -or $normalized -eq "reservationactive" -or $normalized -eq "reservation") { return "ReservedActive" }
+  return $state
+}
+function Get-ReservationDetails {
+  param([string]$ScopeId, [string]$IP)
+  try {
+    $items = @(Get-DhcpServerv4Reservation -ScopeId $ScopeId -IPAddress $IP -ErrorAction Stop)
+    if ($items.Count -gt 0) { return $items[0] }
+  } catch {}
+  return $null
+}
+$exclusions = New-Object System.Collections.ArrayList
+foreach ($range in @(Get-DhcpServerv4ExclusionRange -ScopeId $scopeId -ErrorAction Stop)) {
+  try {
+    $startIp = Get-TextValue $range.StartRange
+    $endIp = Get-TextValue $range.EndRange
+    if ([string]::IsNullOrWhiteSpace($startIp) -or [string]::IsNullOrWhiteSpace($endIp)) { continue }
+    [void]$exclusions.Add([PSCustomObject]@{
+      id = "$scopeId|$startIp|$endIp"
+      scopeId = $scopeId
+      startIp = $startIp
+      endIp = $endIp
+    })
+  } catch {
+    [Console]::Error.WriteLine("Skipped DHCP exclusion in scope " + $scopeId + ": " + $_.Exception.Message)
+  }
+}
+$leases = New-Object System.Collections.ArrayList
+foreach ($lease in @(Get-DhcpServerv4Lease -ScopeId $scopeId -ErrorAction Stop)) {
+  try {
+    $ip = Get-TextValue $lease.IPAddress
+    if ([string]::IsNullOrWhiteSpace($ip)) { continue }
+    [void]$leases.Add([PSCustomObject]@{
+      id = "$scopeId|$ip"
+      scopeId = $scopeId
+      ip = $ip
+      mac = Get-MacValue $lease.ClientId
+      hostname = Get-TextValue $lease.HostName
+      state = Get-LeaseState $lease.AddressState
+      expiresAt = Get-IsoTime $lease.LeaseExpiryTime
+    })
+  } catch {
+    [Console]::Error.WriteLine("Skipped DHCP lease in scope " + $scopeId + ": " + $_.Exception.Message)
+  }
+}
+$reservations = New-Object System.Collections.ArrayList
+foreach ($reservation in @(Get-DhcpServerv4Reservation -ScopeId $scopeId -ErrorAction Stop)) {
+  try {
+    $ip = Get-TextValue $reservation.IPAddress
+    if ([string]::IsNullOrWhiteSpace($ip)) { continue }
+    $name = Get-TextValue $reservation.Name
+    $description = Get-TextValue $reservation.Description
+    if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($description)) {
+      $details = Get-ReservationDetails -ScopeId $scopeId -IP $ip
+      if ($null -ne $details) {
+        if ([string]::IsNullOrWhiteSpace($name)) { $name = Get-TextValue $details.Name }
+        if ([string]::IsNullOrWhiteSpace($description)) { $description = Get-TextValue $details.Description }
+      }
+    }
+    [void]$reservations.Add([PSCustomObject]@{
+      id = "$scopeId|$ip"
+      scopeId = $scopeId
+      ip = $ip
+      mac = Get-MacValue $reservation.ClientId
+      name = $name
+      description = $description
+    })
+  } catch {
+    [Console]::Error.WriteLine("Skipped DHCP reservation in scope " + $scopeId + ": " + $_.Exception.Message)
+  }
+}
+[PSCustomObject]@{
+  exclusions = $exclusions
+  leases = $leases
+  reservations = $reservations
+} | ConvertTo-Json -Depth 8
+`, psString(scopeID))
 }
 
 func (p *PowerShellProvider) ListExclusions(ctx context.Context, scopeID string) ([]Exclusion, error) {
@@ -279,10 +505,22 @@ function Get-TextValue {
   if ($null -eq $Value) { return "" }
   return [string]$Value
 }
+function Get-MacValue {
+  param([object]$Value)
+  return (Get-TextValue $Value).Trim().Replace("-", "").Replace(":", "").Replace(".", "").ToLowerInvariant()
+}
 function Get-IsoTime {
   param([object]$Value)
   if ($null -eq $Value) { return "" }
   try { return $Value.ToString("o") } catch { return "" }
+}
+function Get-LeaseState {
+  param([object]$Value)
+  $state = (Get-TextValue $Value).Trim()
+  $normalized = $state.Replace(" ", "").Replace("_", "").Replace("-", "").ToLowerInvariant()
+  if ($normalized -eq "reservedinactive" -or $normalized -eq "inactivereservation" -or $normalized -eq "reservationinactive") { return "ReservedInactive" }
+  if ($normalized -eq "reservedactive" -or $normalized -eq "activereservation" -or $normalized -eq "reservationactive" -or $normalized -eq "reservation") { return "ReservedActive" }
+  return $state
 }
 $items = New-Object System.Collections.ArrayList
 foreach ($lease in @(Get-DhcpServerv4Lease -ScopeId $scopeId -ErrorAction Stop)) {
@@ -293,9 +531,9 @@ foreach ($lease in @(Get-DhcpServerv4Lease -ScopeId $scopeId -ErrorAction Stop))
       id = "$scopeId|$ip"
       scopeId = $scopeId
       ip = $ip
-      mac = Get-TextValue $lease.ClientId
+      mac = Get-MacValue $lease.ClientId
       hostname = Get-TextValue $lease.HostName
-      state = Get-TextValue $lease.AddressState
+      state = Get-LeaseState $lease.AddressState
       expiresAt = Get-IsoTime $lease.LeaseExpiryTime
     })
   } catch {
@@ -315,8 +553,12 @@ func (p *PowerShellProvider) ReleaseLease(ctx context.Context, scopeID, ip strin
 	if net.ParseIP(ip).To4() == nil {
 		return fmt.Errorf("lease ip must be an IPv4 address")
 	}
-	return run(ctx, fmt.Sprintf(`Import-Module DhcpServer -ErrorAction Stop
-Remove-DhcpServerv4Lease -ScopeId %s -IPAddress %s -Confirm:$false -ErrorAction Stop`, psString(scopeID), psString(ip)))
+	return run(ctx, releaseLeaseScript(ip))
+}
+
+func releaseLeaseScript(ip string) string {
+	return fmt.Sprintf(`Import-Module DhcpServer -ErrorAction Stop
+Remove-DhcpServerv4Lease -IPAddress %s -Confirm:$false -ErrorAction Stop`, psString(ip))
 }
 
 func (p *PowerShellProvider) ListReservations(ctx context.Context, scopeID string) ([]Reservation, error) {
@@ -333,6 +575,10 @@ function Get-TextValue {
   param([object]$Value)
   if ($null -eq $Value) { return "" }
   return [string]$Value
+}
+function Get-MacValue {
+  param([object]$Value)
+  return (Get-TextValue $Value).Trim().Replace("-", "").Replace(":", "").Replace(".", "").ToLowerInvariant()
 }
 function Get-ReservationDetails {
   param([string]$ScopeId, [string]$IP)
@@ -360,7 +606,7 @@ foreach ($reservation in @(Get-DhcpServerv4Reservation -ScopeId $scopeId -ErrorA
       id = "$scopeId|$ip"
       scopeId = $scopeId
       ip = $ip
-      mac = Get-TextValue $reservation.ClientId
+      mac = Get-MacValue $reservation.ClientId
       name = $name
       description = $description
     })
@@ -377,13 +623,17 @@ func (p *PowerShellProvider) CreateReservation(ctx context.Context, reservation 
 	if err != nil {
 		return Reservation{}, err
 	}
-	err = run(ctx, fmt.Sprintf(`Import-Module DhcpServer -ErrorAction Stop
-Add-DhcpServerv4Reservation -ScopeId %s -IPAddress %s -ClientId %s -Name %s -Description %s -ErrorAction Stop | Out-Null`,
-		psString(reservation.ScopeID), psString(reservation.IP), psString(reservation.MAC), psString(reservation.Name), psString(reservation.Description)))
+	err = run(ctx, createReservationScript(reservation))
 	if err != nil {
 		return Reservation{}, err
 	}
 	return reservation, nil
+}
+
+func createReservationScript(reservation Reservation) string {
+	return fmt.Sprintf(`Import-Module DhcpServer -ErrorAction Stop
+Add-DhcpServerv4Reservation -ScopeId %s -IPAddress %s -ClientId %s -Name %s -Description %s -Type 'dhcp' -ErrorAction Stop | Out-Null`,
+		psString(reservation.ScopeID), psString(reservation.IP), psString(reservation.MAC), psString(reservation.Name), psString(reservation.Description))
 }
 
 func (p *PowerShellProvider) UpdateReservation(ctx context.Context, update ReservationUpdate) (Reservation, error) {
@@ -395,15 +645,18 @@ func (p *PowerShellProvider) UpdateReservation(ctx context.Context, update Reser
 	if err != nil {
 		return Reservation{}, fmt.Errorf("new reservation: %w", err)
 	}
-	script := fmt.Sprintf(`
-Import-Module DhcpServer -ErrorAction Stop
-Remove-DhcpServerv4Reservation -ScopeId %s -IPAddress %s -Confirm:$false -ErrorAction Stop
-Add-DhcpServerv4Reservation -ScopeId %s -IPAddress %s -ClientId %s -Name %s -Description %s -ErrorAction Stop | Out-Null
-`, psString(oldReservation.ScopeID), psString(oldReservation.IP), psString(newReservation.ScopeID), psString(newReservation.IP), psString(newReservation.MAC), psString(newReservation.Name), psString(newReservation.Description))
+	script := updateReservationScript(oldReservation, newReservation)
 	if err := run(ctx, script); err != nil {
 		return Reservation{}, err
 	}
 	return newReservation, nil
+}
+
+func updateReservationScript(oldReservation, newReservation Reservation) string {
+	return fmt.Sprintf(`
+Import-Module DhcpServer -ErrorAction Stop
+Set-DhcpServerv4Reservation -IPAddress %s -Name %s -Description %s -Type 'dhcp' -ErrorAction Stop | Out-Null
+`, psString(newReservation.IP), psString(newReservation.Name), psString(newReservation.Description))
 }
 
 func (p *PowerShellProvider) DeleteReservation(ctx context.Context, scopeID, ip string) error {
@@ -415,8 +668,12 @@ func (p *PowerShellProvider) DeleteReservation(ctx context.Context, scopeID, ip 
 	if net.ParseIP(ip).To4() == nil {
 		return fmt.Errorf("reservation ip must be an IPv4 address")
 	}
-	return run(ctx, fmt.Sprintf(`Import-Module DhcpServer -ErrorAction Stop
-Remove-DhcpServerv4Reservation -ScopeId %s -IPAddress %s -Confirm:$false -ErrorAction Stop`, psString(scopeID), psString(ip)))
+	return run(ctx, deleteReservationScript(ip))
+}
+
+func deleteReservationScript(ip string) string {
+	return fmt.Sprintf(`Import-Module DhcpServer -ErrorAction Stop
+Remove-DhcpServerv4Reservation -IPAddress %s -Confirm:$false -ErrorAction Stop`, psString(ip))
 }
 
 func runJSON(ctx context.Context, script string, dst any) error {
@@ -457,7 +714,7 @@ func runOutput(ctx context.Context, script string) ([]byte, error) {
 	if err := file.Close(); err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path)
+	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", powerShellCommandScript(path))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -476,6 +733,10 @@ func runOutput(ctx context.Context, script string) ([]byte, error) {
 		return nil, fmt.Errorf("powershell failed: %s", msg)
 	}
 	return stdout.Bytes(), nil
+}
+
+func powerShellCommandScript(path string) string {
+	return "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; [Console]::InputEncoding=[System.Text.Encoding]::UTF8; & " + psString(path)
 }
 
 func classifyPowerShellError(message string) string {
@@ -522,10 +783,7 @@ func parseScopeSubnet(value string) (string, string, error) {
 		return "", "", fmt.Errorf("scope subnet is required")
 	}
 	if !strings.Contains(value, "/") {
-		if net.ParseIP(value).To4() == nil {
-			return "", "", fmt.Errorf("scope subnet must be an IPv4 address or CIDR")
-		}
-		return value, "255.255.255.0", nil
+		return "", "", fmt.Errorf("scope subnet must be a valid IPv4 CIDR")
 	}
 	ip, network, err := net.ParseCIDR(value)
 	if err != nil || ip.To4() == nil {
@@ -576,16 +834,27 @@ func normalizeScope(scope Scope) (Scope, string, string, error) {
 	}
 	if scope.LeaseDurationSeconds == -1 {
 		scope.LeaseDurationHours = 0
-	} else if scope.LeaseDurationHours <= 0 {
-		scope.LeaseDurationHours = 24
+	} else if scope.LeaseDurationSeconds <= 0 {
+		return Scope{}, "", "", fmt.Errorf("scope lease duration seconds must be positive or -1")
+	} else {
+		scope.LeaseDurationHours = (scope.LeaseDurationSeconds + 3599) / 3600
 	}
 	if scope.State == "" {
 		scope.State = "Active"
 	}
 	scope.ID = scopeID
-	scope.Subnet = scopeID + "/" + subnetMask
+	scope.Subnet = scopeID + "/" + ipv4MaskPrefix(subnetMask)
 	scope.ServerID = "local"
 	return scope, scopeID, subnetMask, nil
+}
+
+func ipv4MaskPrefix(mask string) string {
+	parsed := net.ParseIP(strings.TrimSpace(mask)).To4()
+	if parsed == nil {
+		return ""
+	}
+	ones, _ := net.IPMask(parsed).Size()
+	return fmt.Sprint(ones)
 }
 
 func normalizeScopeUpdate(scope Scope) (Scope, string, error) {

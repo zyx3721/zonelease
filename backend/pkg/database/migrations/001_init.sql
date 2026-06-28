@@ -332,6 +332,7 @@ VALUES('base', '{
   "dhcpScopeConcurrency": 5,
   "operationRefreshDelaySeconds": 10,
   "agentOfflineFailureCount": 3,
+  "agentConnectionTimeoutSeconds": 5,
   "agentOperationTimeoutSeconds": 20,
   "agentFullSyncTimeoutSeconds": 300,
   "agentHealthCheckIntervalMinutes": 1,

@@ -102,6 +102,9 @@ func validateBaseConfig(item domain.SystemBaseConfig) error {
 	if item.AgentOfflineFailureCount < 1 || item.AgentOfflineFailureCount > 20 {
 		return fmt.Errorf("Agent 离线失败次数需在 1 到 20 次之间")
 	}
+	if item.AgentConnectionTimeoutSeconds < 1 || item.AgentConnectionTimeoutSeconds > 20 {
+		return fmt.Errorf("Agent 连接超时时间需在 1 到 20 秒之间")
+	}
 	if item.AgentOperationTimeoutSeconds < 1 || item.AgentOperationTimeoutSeconds > 60 {
 		return fmt.Errorf("Agent 操作超时时间需在 1 到 60 秒之间")
 	}
@@ -127,6 +130,14 @@ func (r *Router) agentOfflineFailureLimit(ctx context.Context) int {
 		return domain.DefaultSystemBaseConfig().AgentOfflineFailureCount
 	}
 	return domain.NormalizeSystemBaseConfig(config).AgentOfflineFailureCount
+}
+
+func (r *Router) agentConnectionTimeout(ctx context.Context) time.Duration {
+	config, err := r.store.GetSystemBaseConfig(ctx)
+	if err != nil {
+		return time.Duration(domain.DefaultSystemBaseConfig().AgentConnectionTimeoutSeconds) * time.Second
+	}
+	return time.Duration(domain.NormalizeSystemBaseConfig(config).AgentConnectionTimeoutSeconds) * time.Second
 }
 
 func (r *Router) agentOperationTimeout(ctx context.Context) time.Duration {

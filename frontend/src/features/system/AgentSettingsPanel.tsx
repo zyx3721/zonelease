@@ -39,8 +39,17 @@ export function AgentPanel({
       patch: (value: number) => ({ agentHealthCheckConcurrency: value }),
     },
     {
+      label: 'Agent 连接超时',
+      description: `连接测试和同步前检查超过 ${form.agentConnectionTimeoutSeconds} 秒无响应则失败`,
+      unit: '秒',
+      value: form.agentConnectionTimeoutSeconds,
+      min: 1,
+      max: 20,
+      patch: (value: number) => ({ agentConnectionTimeoutSeconds: value }),
+    },
+    {
       label: 'Agent 操作超时',
-      description: `连接测试和 DNS / DHCP 操作超过 ${form.agentOperationTimeoutSeconds} 秒无响应则失败`,
+      description: `DNS / DHCP 操作超过 ${form.agentOperationTimeoutSeconds} 秒无响应则失败`,
       unit: '秒',
       value: form.agentOperationTimeoutSeconds,
       min: 1,

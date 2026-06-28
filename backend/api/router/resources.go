@@ -577,28 +577,21 @@ func validateDHCPScopeDefaultGateway(subnet, defaultGateway string) error {
 func parseDHCPScopeSubnet(subnet string) (net.IP, net.IP, error) {
 	parts := strings.Split(strings.TrimSpace(subnet), "/")
 	if len(parts) != 2 {
-		return nil, nil, fmt.Errorf("子网必须是有效的 IPv4 CIDR 或子网掩码格式")
+		return nil, nil, fmt.Errorf("子网必须是有效的 IPv4 CIDR")
 	}
 	ip := net.ParseIP(strings.TrimSpace(parts[0])).To4()
 	if ip == nil {
-		return nil, nil, fmt.Errorf("子网必须是有效的 IPv4 CIDR 或子网掩码格式")
+		return nil, nil, fmt.Errorf("子网必须是有效的 IPv4 CIDR")
 	}
 	maskText := strings.TrimSpace(parts[1])
 	if maskText == "" {
-		return nil, nil, fmt.Errorf("子网必须是有效的 IPv4 CIDR 或子网掩码格式")
+		return nil, nil, fmt.Errorf("子网必须是有效的 IPv4 CIDR")
 	}
-	if !strings.Contains(maskText, ".") {
-		prefix := -1
-		if _, err := fmt.Sscanf(maskText, "%d", &prefix); err != nil || prefix < 0 || prefix > 32 {
-			return nil, nil, fmt.Errorf("子网必须是有效的 IPv4 CIDR 或子网掩码格式")
-		}
-		return ip, net.IP(net.CIDRMask(prefix, 32)).To4(), nil
+	prefix := -1
+	if _, err := fmt.Sscanf(maskText, "%d", &prefix); err != nil || prefix < 0 || prefix > 32 {
+		return nil, nil, fmt.Errorf("子网必须是有效的 IPv4 CIDR")
 	}
-	mask := net.ParseIP(maskText).To4()
-	if mask == nil {
-		return nil, nil, fmt.Errorf("子网必须是有效的 IPv4 CIDR 或子网掩码格式")
-	}
-	return ip, mask, nil
+	return ip, net.IP(net.CIDRMask(prefix, 32)).To4(), nil
 }
 
 func normalizeDNSZoneName(name string, reverse bool) string {
@@ -720,7 +713,7 @@ func (r *Router) enqueueZoneRefresh(serverID, zoneID, zoneName, createdBy string
 	return task, nil
 }
 
-func (r *Router) enqueueServerRefresh(serverID, serverName, createdBy string) (domain.RefreshTask, error) {
+func (r *Router) enqueueServerRefresh(serverID, serverName, createdBy string, skipHealthCheck bool) (domain.RefreshTask, error) {
 	ctx := context.Background()
 	task, err := r.store.CreateRefreshTask(ctx, syncsvc.RefreshServerType, map[string]any{
 		"message":      "Agent 同步已排队",
@@ -733,8 +726,11 @@ func (r *Router) enqueueServerRefresh(serverID, serverName, createdBy string) (d
 	if err != nil {
 		return domain.RefreshTask{}, err
 	}
+	if server, serverErr := r.store.GetServer(ctx, serverID); serverErr == nil {
+		r.sync.MarkAgentSyncQueued(ctx, server)
+	}
 	_ = r.realtime.PublishRefresh(ctx, realtime.RefreshEvent{Type: syncsvc.RefreshServerType, TaskID: task.ID, Status: "queued", Message: "Agent 同步已排队"})
-	go r.sync.RunRefreshTask(context.Background(), task.ID, syncsvc.RefreshServerType, &syncsvc.ServerTarget{ServerID: serverID, ServerName: serverName})
+	go r.sync.RunRefreshTask(context.Background(), task.ID, syncsvc.RefreshServerType, &syncsvc.ServerTarget{ServerID: serverID, ServerName: serverName, SkipHealthCheck: skipHealthCheck})
 	return task, nil
 }
 

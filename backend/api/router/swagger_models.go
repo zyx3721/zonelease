@@ -40,6 +40,7 @@ type systemBaseConfigResponse struct {
 	DHCPScopeConcurrency             int     `json:"dhcpScopeConcurrency"`
 	OperationRefreshDelaySeconds     int     `json:"operationRefreshDelaySeconds"`
 	AgentOfflineFailureCount         int     `json:"agentOfflineFailureCount"`
+	AgentConnectionTimeoutSeconds    int     `json:"agentConnectionTimeoutSeconds"`
 	AgentOperationTimeoutSeconds     int     `json:"agentOperationTimeoutSeconds"`
 	AgentFullSyncTimeoutSeconds      int     `json:"agentFullSyncTimeoutSeconds"`
 	AgentHealthCheckIntervalMinutes  int     `json:"agentHealthCheckIntervalMinutes"`

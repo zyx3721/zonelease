@@ -915,6 +915,8 @@ definitions:
     type: object
   router.systemBaseConfigResponse:
     properties:
+      agentConnectionTimeoutSeconds:
+        type: integer
       agentFullSyncTimeoutSeconds:
         type: integer
       agentHealthCheckConcurrency:
@@ -2412,6 +2414,10 @@ paths:
         in: path
         name: id
         required: true
+        type: string
+      - description: 传 1 时跳过同步前 /health 预检查，仅用于保存后已测试通过的首次自动同步
+        in: query
+        name: skipHealthCheck
         type: string
       produces:
       - application/json

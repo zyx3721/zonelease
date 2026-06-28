@@ -20,6 +20,7 @@ export type SystemBaseConfig = {
   dhcpScopeConcurrency: number;
   operationRefreshDelaySeconds: number;
   agentOfflineFailureCount: number;
+  agentConnectionTimeoutSeconds: number;
   agentOperationTimeoutSeconds: number;
   agentFullSyncTimeoutSeconds: number;
   agentHealthCheckIntervalMinutes: number;

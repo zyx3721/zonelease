@@ -16,6 +16,7 @@ export const defaultBaseConfig: SystemBaseConfig = {
   dhcpScopeConcurrency: 5,
   operationRefreshDelaySeconds: 10,
   agentOfflineFailureCount: 3,
+  agentConnectionTimeoutSeconds: 5,
   agentOperationTimeoutSeconds: 20,
   agentFullSyncTimeoutSeconds: 300,
   agentHealthCheckIntervalMinutes: 1,
@@ -126,6 +127,10 @@ export function normalizeBaseConfig(config: Partial<SystemBaseConfig>): SystemBa
     agentOfflineFailureCount: numberValue(
       config.agentOfflineFailureCount,
       defaultBaseConfig.agentOfflineFailureCount
+    ),
+    agentConnectionTimeoutSeconds: numberValue(
+      config.agentConnectionTimeoutSeconds,
+      defaultBaseConfig.agentConnectionTimeoutSeconds
     ),
     agentOperationTimeoutSeconds: numberValue(
       config.agentOperationTimeoutSeconds,

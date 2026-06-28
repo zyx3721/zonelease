@@ -66,13 +66,21 @@ type ReservationUpdate struct {
 	New Reservation `json:"new"`
 }
 
+type ScopeDetails struct {
+	Exclusions   []Exclusion   `json:"exclusions"`
+	Leases       []Lease       `json:"leases"`
+	Reservations []Reservation `json:"reservations"`
+}
+
 type Provider interface {
 	Probe(context.Context) error
 	ListScopes(context.Context) ([]Scope, error)
+	GetScope(context.Context, string) (Scope, error)
 	CreateScope(context.Context, Scope) (Scope, error)
 	UpdateScope(context.Context, Scope) (Scope, error)
 	SetScopeState(context.Context, string, bool) error
 	DeleteScope(context.Context, string) error
+	ListScopeDetails(context.Context, string) (ScopeDetails, error)
 	ListExclusions(context.Context, string) ([]Exclusion, error)
 	CreateExclusion(context.Context, Exclusion) (Exclusion, error)
 	DeleteExclusion(context.Context, string, string, string) error

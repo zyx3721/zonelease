@@ -520,8 +520,9 @@ export function pingServer(id: string, options: { mode?: 'auto' } = {}) {
   ).finally(emitNotificationRefresh);
 }
 
-export function syncServer(id: string) {
-  return api<{ id: string; status: string }>(`/api/servers/${encodeURIComponent(id)}/sync`, {
+export function syncServer(id: string, options: { skipHealthCheck?: boolean } = {}) {
+  const query = options.skipHealthCheck ? '?skipHealthCheck=1' : '';
+  return api<{ id: string; status: string }>(`/api/servers/${encodeURIComponent(id)}/sync${query}`, {
     method: 'POST',
   });
 }

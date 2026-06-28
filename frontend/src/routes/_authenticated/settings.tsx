@@ -113,7 +113,7 @@ function SettingsPage() {
       setForm({ name: '', agentUrl: '', apiKey: '', role: '', tlsInsecure: false });
       setVerifiedAgent(null);
       const toastId = toast.loading(`${created.name} 已保存，开始同步`, taskToastOptions);
-      await handleSyncSavedAgent(created, toastId);
+      await handleSyncSavedAgent(created, toastId, { skipHealthCheck: true });
     } catch (error) {
       setProbeResult({
         type: 'error',
@@ -184,11 +184,15 @@ function SettingsPage() {
     }
   }
 
-  async function handleSyncSavedAgent(agent: ServerConfig, existingToastId?: string | number) {
+  async function handleSyncSavedAgent(
+    agent: ServerConfig,
+    existingToastId?: string | number,
+    options: { skipHealthCheck?: boolean } = {}
+  ) {
     setBusy(`${agent.id}:sync`);
     const toastId = existingToastId ?? toast.loading(`${agent.name} 正在同步`, taskToastOptions);
     try {
-      const task = await syncServer(agent.id);
+      const task = await syncServer(agent.id, { skipHealthCheck: options.skipHealthCheck });
       await waitRefreshTask(task.id);
       await Promise.all([reloadDB(), reloadDB({ includeDns: true })]);
       toast.success(`${agent.name} 同步完成`, taskToastDoneOptionsFor(toastId));

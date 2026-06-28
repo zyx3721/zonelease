@@ -121,6 +121,11 @@ func (s *Server) scopeRoute(w http.ResponseWriter, r *http.Request) {
 		respond(w, r, map[string]bool{"deleted": true}, s.provider.DeleteScope(r.Context(), scopeID))
 		return
 	}
+	if len(parts) == 1 && r.Method == http.MethodGet {
+		result, err := s.provider.GetScope(r.Context(), scopeID)
+		respond(w, r, result, err)
+		return
+	}
 	if len(parts) == 1 && r.Method == http.MethodPut {
 		var body dhcp.Scope
 		if !decode(w, r, &body) {
@@ -142,6 +147,11 @@ func (s *Server) scopeRoute(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 2 && parts[1] == "leases" && r.Method == http.MethodGet {
 		items, err := s.provider.ListLeases(r.Context(), scopeID)
 		respond(w, r, items, err)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "details" && r.Method == http.MethodGet {
+		details, err := s.provider.ListScopeDetails(r.Context(), scopeID)
+		respond(w, r, details, err)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "reservations" && r.Method == http.MethodGet {

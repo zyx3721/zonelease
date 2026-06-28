@@ -615,13 +615,13 @@ function isReservedActiveLease(lease: DhcpLease) {
   const state = lease.state.trim().toLowerCase();
   const expiresAt = lease.expiresAt.trim().toLowerCase();
   if (expiresAt === 'never' || expiresAt === '永不过期') return true;
-  return state === 'reservedactive' || state === 'reserved' || state.includes('reservation');
+  return state === 'reservedactive' || state === 'reserved' || state === 'activereservation';
 }
 
 function isReservedInactiveLease(lease: DhcpLease) {
   const state = lease.state.trim().toLowerCase();
   const expiresAt = lease.expiresAt.trim().toLowerCase();
-  return state === 'reservedinactive' || expiresAt === '不活动';
+  return state === 'reservedinactive' || state === 'inactivereservation' || expiresAt === '不活动';
 }
 
 function looksLikeLeaseExpiry(value: string) {

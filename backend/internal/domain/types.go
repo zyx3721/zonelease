@@ -112,6 +112,7 @@ type SystemBaseConfig struct {
 	DHCPScopeConcurrency             int     `json:"dhcpScopeConcurrency"`
 	OperationRefreshDelaySeconds     int     `json:"operationRefreshDelaySeconds"`
 	AgentOfflineFailureCount         int     `json:"agentOfflineFailureCount"`
+	AgentConnectionTimeoutSeconds    int     `json:"agentConnectionTimeoutSeconds"`
 	AgentOperationTimeoutSeconds     int     `json:"agentOperationTimeoutSeconds"`
 	AgentFullSyncTimeoutSeconds      int     `json:"agentFullSyncTimeoutSeconds"`
 	AgentHealthCheckIntervalMinutes  int     `json:"agentHealthCheckIntervalMinutes"`
@@ -134,6 +135,7 @@ func DefaultSystemBaseConfig() SystemBaseConfig {
 		DHCPScopeConcurrency:             5,
 		OperationRefreshDelaySeconds:     10,
 		AgentOfflineFailureCount:         3,
+		AgentConnectionTimeoutSeconds:    5,
 		AgentOperationTimeoutSeconds:     20,
 		AgentFullSyncTimeoutSeconds:      300,
 		AgentHealthCheckIntervalMinutes:  1,
@@ -174,6 +176,9 @@ func NormalizeSystemBaseConfig(item SystemBaseConfig) SystemBaseConfig {
 	}
 	if item.AgentOfflineFailureCount <= 0 {
 		item.AgentOfflineFailureCount = defaults.AgentOfflineFailureCount
+	}
+	if item.AgentConnectionTimeoutSeconds <= 0 {
+		item.AgentConnectionTimeoutSeconds = defaults.AgentConnectionTimeoutSeconds
 	}
 	if item.AgentOperationTimeoutSeconds <= 0 {
 		item.AgentOperationTimeoutSeconds = defaults.AgentOperationTimeoutSeconds
