@@ -21,19 +21,23 @@ import (
 
 const (
 	RefreshAllType       = "runtime.refresh.all"
-	RefreshFastType      = "runtime.refresh.fast"
+	RefreshDNSAllType    = "runtime.refresh.dns.all"
+	RefreshDHCPAllType   = "runtime.refresh.dhcp.all"
 	RefreshServerType    = "runtime.refresh.server"
 	RefreshDNSZoneType   = "runtime.refresh.dns.zone"
 	RefreshDHCPScopeType = "runtime.refresh.dhcp.scope"
 
 	notificationSourceAgentHealth = "agent_health"
 
-	agentHealthCheckLockKey = "zonelease:lock:agent-health-check"
-	scheduledRefreshLockKey = "zonelease:lock:refresh:scheduled-all"
-	refreshTaskRuntimeTTL   = 30 * time.Minute
+	agentHealthCheckLockKey     = "zonelease:lock:agent-health-check"
+	scheduledDNSRefreshLockKey  = "zonelease:lock:refresh:scheduled-dns"
+	scheduledDHCPRefreshLockKey = "zonelease:lock:refresh:scheduled-dhcp"
+	refreshTaskRuntimeTTL       = 30 * time.Minute
 
 	unreadNotificationCountCacheKey = "zonelease:runtime:notifications:unread-count"
 )
+
+var errAgentSyncRunning = errors.New("当前 Agent 正在同步，请稍后再操作")
 
 type Service struct {
 	store    *repository.Store
@@ -54,9 +58,10 @@ type runtimeLimits struct {
 }
 
 type ZoneTarget struct {
-	ServerID string `json:"serverId"`
-	ZoneID   string `json:"zoneId"`
-	ZoneName string `json:"zoneName"`
+	ServerID   string `json:"serverId"`
+	ServerName string `json:"serverName,omitempty"`
+	ZoneID     string `json:"zoneId"`
+	ZoneName   string `json:"zoneName"`
 }
 
 type ServerTarget struct {
@@ -66,21 +71,26 @@ type ServerTarget struct {
 
 type DHCPScopeTarget struct {
 	ServerID        string `json:"serverId"`
-	ScopeExternalID string `json:"scopeExternalId"`
+	ServerName      string `json:"serverName,omitempty"`
+	ScopeID         string `json:"scopeId,omitempty"`
+	ScopeExternalID string `json:"-"`
 	ScopeName       string `json:"scopeName,omitempty"`
 }
 
 type refreshProgressPayload struct {
 	Message       string               `json:"message"`
-	TargetType    string               `json:"targetType,omitempty"`
-	TargetID      string               `json:"targetId,omitempty"`
+	Warn          string               `json:"warn,omitempty"`
+	StartedAt     string               `json:"startedAt,omitempty"`
+	FinishedAt    string               `json:"finishedAt,omitempty"`
 	TotalAgents   int                  `json:"totalAgents"`
 	StartedAgents int                  `json:"startedAgents"`
 	SyncedAgents  int                  `json:"syncedAgents"`
+	SkippedAgents int                  `json:"skippedAgents"`
 	FailedAgents  int                  `json:"failedAgents"`
+	ResourceType  string               `json:"resourceType,omitempty"`
+	ResourceID    string               `json:"resourceId,omitempty"`
+	ResourceName  string               `json:"resourceName,omitempty"`
 	CurrentAgent  string               `json:"currentAgent,omitempty"`
-	StartedAt     string               `json:"startedAt,omitempty"`
-	FinishedAt    string               `json:"finishedAt,omitempty"`
 	AgentResults  []refreshAgentResult `json:"agentResults"`
 	AgentEvent    *refreshAgentResult  `json:"agentEvent,omitempty"`
 	Error         string               `json:"error,omitempty"`
@@ -91,6 +101,7 @@ type refreshAgentResult struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
+	Warn   string `json:"warn,omitempty"`
 }
 
 func New(store *repository.Store, agentClient *agent.Client, realtimeService *realtime.Service, logger *slog.Logger, cfg config.RuntimeConfig) *Service {
@@ -98,46 +109,80 @@ func New(store *repository.Store, agentClient *agent.Client, realtimeService *re
 }
 
 func (s *Service) StartScheduledFullRefresh(ctx context.Context) {
-	if s.cfg.DeepSyncInterval <= 0 {
-		s.logger.Info("Scheduled full refresh disabled")
+	s.startScheduledRoleRefresh(ctx, RefreshDNSAllType, scheduledDNSRefreshLockKey, s.cfg.DNSDeepSyncInterval, "DNS 定时全量刷新已排队")
+	s.startScheduledRoleRefresh(ctx, RefreshDHCPAllType, scheduledDHCPRefreshLockKey, s.cfg.DHCPDeepSyncInterval, "DHCP 定时全量刷新已排队")
+}
+
+func (s *Service) startScheduledRoleRefresh(ctx context.Context, taskType, lockKey string, interval time.Duration, queuedMessage string) {
+	if interval <= 0 {
+		s.logger.Info("Scheduled role refresh disabled", "type", taskType)
 		return
 	}
 	go func() {
-		s.logger.Info("Scheduled full refresh started", "interval", s.cfg.DeepSyncInterval.String())
-		ticker := time.NewTicker(s.cfg.DeepSyncInterval)
-		defer ticker.Stop()
+		s.logger.Info("Scheduled role refresh started", "type", taskType, "interval", interval.String())
 		for {
+			wait := nextScheduledRoleRefreshDelay(time.Now(), interval)
+			timer := time.NewTimer(wait)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return
-			case <-ticker.C:
-				lock, locked, err := s.realtime.TryLock(ctx, scheduledRefreshLockKey, s.cfg.DeepSyncInterval)
+			case <-timer.C:
+				lock, locked, err := s.realtime.TryLock(ctx, lockKey, s.refreshTaskLockTTL(ctx))
 				if err != nil {
-					s.logger.Warn("Acquire scheduled refresh lock failed", "error", err)
+					s.logger.Warn("Acquire scheduled role refresh lock failed", "type", taskType, "error", err)
 				} else if !locked {
-					s.logger.Info("Skip scheduled refresh because another instance holds the lock")
+					s.logger.Info("Skip scheduled role refresh because another instance holds the lock", "type", taskType)
 					continue
 				}
-				task, err := s.store.CreateRefreshTask(ctx, RefreshAllType, map[string]any{"message": "定时全量刷新已排队"}, "")
+				task, err := s.store.CreateRefreshTask(ctx, taskType, map[string]any{"message": queuedMessage}, "")
 				if err != nil {
 					if locked {
 						_ = s.realtime.Unlock(context.Background(), lock)
 					}
-					s.logger.Warn("Create scheduled refresh task failed", "error", err)
+					s.logger.Warn("Create scheduled role refresh task failed", "type", taskType, "error", err)
 					continue
 				}
-				_ = s.publish(context.Background(), RefreshAllType, task.ID, "queued", "定时全量刷新已排队")
+				_ = s.publish(context.Background(), taskType, task.ID, "queued", queuedMessage)
 				go func() {
 					defer func() {
 						if locked {
 							_ = s.realtime.Unlock(context.Background(), lock)
 						}
 					}()
-					s.RunRefreshTask(context.Background(), task.ID, RefreshAllType, nil)
+					s.RunRefreshTask(context.Background(), task.ID, taskType, nil)
 				}()
 			}
 		}
 	}()
+}
+
+func nextScheduledRoleRefreshDelay(now time.Time, interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return 0
+	}
+	seconds := int64(interval.Seconds())
+	if seconds <= 0 {
+		return interval
+	}
+	daySeconds := int64((24 * time.Hour) / time.Second)
+	var elapsed int64
+	if seconds%daySeconds == 0 {
+		year, month, day := now.Date()
+		midnight := time.Date(year, month, day, 0, 0, 0, 0, now.Location())
+		elapsed = int64(now.Sub(midnight).Seconds())
+	} else if daySeconds%seconds == 0 {
+		year, month, day := now.Date()
+		midnight := time.Date(year, month, day, 0, 0, 0, 0, now.Location())
+		elapsed = int64(now.Sub(midnight).Seconds())
+	} else {
+		elapsed = now.Unix()
+	}
+	remaining := seconds - elapsed%seconds
+	if remaining <= 0 {
+		remaining = seconds
+	}
+	return time.Duration(remaining) * time.Second
 }
 
 func (s *Service) StartScheduledHealthCheck(ctx context.Context) {
@@ -309,9 +354,14 @@ func (s *Service) RunRefreshTask(ctx context.Context, taskID, taskType string, t
 		if err != nil {
 			s.logger.Warn("Acquire refresh task lock failed", "task", taskID, "type", taskType, "lock", lockKey, "error", err)
 		} else if !locked {
-			payload := refreshTaskPayload(taskType, target, "已有相同刷新任务正在执行", "")
-			s.updateRefreshTask(ctx, taskID, "completed", payload)
-			_ = s.publish(ctx, taskType, taskID, "completed", "已有相同刷新任务正在执行")
+			message := "重复刷新任务已跳过"
+			if taskType == RefreshServerType {
+				message = "当前 Agent 正在同步，请稍后再操作"
+			}
+			if err := s.store.DeleteRefreshTask(ctx, taskID); err != nil {
+				s.logger.Warn("Delete duplicate refresh task failed", "task", taskID, "type", taskType, "error", err)
+			}
+			_ = s.publish(ctx, taskType, taskID, "failed", message)
 			return
 		}
 		defer func() {
@@ -343,6 +393,9 @@ func (s *Service) RunRefreshTask(ctx context.Context, taskID, taskType string, t
 		if !ok || zoneTarget == nil {
 			err = errors.New("zone target is required")
 		} else {
+			if server, serverErr := s.store.GetServer(ctx, zoneTarget.ServerID); serverErr == nil {
+				zoneTarget.ServerName = server.Name
+			}
 			err = s.SyncDNSZone(ctx, zoneTarget.ServerID, zoneTarget.ZoneName)
 		}
 	case RefreshDHCPScopeType:
@@ -350,6 +403,9 @@ func (s *Service) RunRefreshTask(ctx context.Context, taskID, taskType string, t
 		if !ok || scopeTarget == nil {
 			err = errors.New("dhcp scope target is required")
 		} else {
+			if server, serverErr := s.store.GetServer(ctx, scopeTarget.ServerID); serverErr == nil {
+				scopeTarget.ServerName = server.Name
+			}
 			err = s.SyncDHCPScope(ctx, scopeTarget.ServerID, scopeTarget.ScopeExternalID)
 		}
 	default:
@@ -394,8 +450,9 @@ func refreshTaskPayload(taskType string, target any, message, errorMessage strin
 	switch taskType {
 	case RefreshServerType:
 		if serverTarget, ok := target.(*ServerTarget); ok && serverTarget != nil {
-			payload["targetType"] = "server"
-			payload["targetId"] = serverTarget.ServerID
+			payload["resourceType"] = "server"
+			payload["resourceId"] = serverTarget.ServerID
+			payload["resourceName"] = serverTarget.ServerName
 			payload["serverId"] = serverTarget.ServerID
 			if strings.TrimSpace(serverTarget.ServerName) != "" {
 				payload["serverName"] = serverTarget.ServerName
@@ -403,20 +460,22 @@ func refreshTaskPayload(taskType string, target any, message, errorMessage strin
 		}
 	case RefreshDNSZoneType:
 		if zoneTarget, ok := target.(*ZoneTarget); ok && zoneTarget != nil {
-			payload["targetType"] = "dns.zone"
-			payload["targetId"] = zoneTarget.ZoneName
+			payload["resourceType"] = "dns.zone"
+			payload["resourceId"] = zoneTarget.ZoneID
+			payload["resourceName"] = zoneTarget.ZoneName
 			payload["serverId"] = zoneTarget.ServerID
-			payload["zoneId"] = zoneTarget.ZoneID
-			payload["zoneName"] = zoneTarget.ZoneName
+			if strings.TrimSpace(zoneTarget.ServerName) != "" {
+				payload["serverName"] = zoneTarget.ServerName
+			}
 		}
 	case RefreshDHCPScopeType:
 		if scopeTarget, ok := target.(*DHCPScopeTarget); ok && scopeTarget != nil {
-			payload["targetType"] = "dhcp.scope"
-			payload["targetId"] = scopeTarget.ScopeExternalID
+			payload["resourceType"] = "dhcp.scope"
+			payload["resourceId"] = scopeTarget.ScopeID
+			payload["resourceName"] = scopeTarget.ScopeName
 			payload["serverId"] = scopeTarget.ServerID
-			payload["scopeExternalId"] = scopeTarget.ScopeExternalID
-			if strings.TrimSpace(scopeTarget.ScopeName) != "" {
-				payload["scopeName"] = scopeTarget.ScopeName
+			if strings.TrimSpace(scopeTarget.ServerName) != "" {
+				payload["serverName"] = scopeTarget.ServerName
 			}
 		}
 	}
@@ -433,7 +492,7 @@ func (s *Service) SyncAll(ctx context.Context, taskID, taskType string) (*refres
 	}
 	targets := make([]domain.Server, 0, len(servers))
 	for _, server := range servers {
-		if strings.TrimSpace(server.AgentURL) != "" {
+		if strings.TrimSpace(server.AgentURL) != "" && shouldSyncServerForTask(taskType, server) {
 			targets = append(targets, server)
 		}
 	}
@@ -447,6 +506,7 @@ func (s *Service) SyncAll(ctx context.Context, taskID, taskType string) (*refres
 	started := 0
 	synced := 0
 	failed := 0
+	skipped := 0
 	startedAt := localTaskTime(time.Now())
 	publishProgress := func(currentAgent string, agentEvent *refreshAgentResult, publishEvent bool) {
 		if taskID == "" || taskType == "" {
@@ -454,15 +514,17 @@ func (s *Service) SyncAll(ctx context.Context, taskID, taskType string) (*refres
 		}
 		payload := refreshProgressPayload{
 			Message:       "刷新任务运行中",
-			TargetType:    "runtime",
+			ResourceType:  "runtime",
 			TotalAgents:   total,
 			StartedAgents: started,
 			SyncedAgents:  synced,
 			FailedAgents:  failed,
+			SkippedAgents: skipped,
 			CurrentAgent:  currentAgent,
 			StartedAt:     startedAt,
 			AgentResults:  append([]refreshAgentResult(nil), agentResults...),
 		}
+		payload.Warn = refreshProgressWarn(payload.AgentResults)
 		if agentEvent != nil {
 			eventCopy := *agentEvent
 			payload.AgentEvent = &eventCopy
@@ -486,6 +548,14 @@ func (s *Service) SyncAll(ctx context.Context, taskID, taskType string) (*refres
 			mu.Unlock()
 			if err := s.syncServer(ctx, server); err != nil {
 				mu.Lock()
+				if isAgentSyncRunningError(err) {
+					skipped++
+					result := refreshAgentResult{ID: server.ID, Name: server.Name, Status: "skipped", Warn: server.Name + " 已处于正在同步中，跳过同步"}
+					agentResults = append(agentResults, result)
+					publishProgress("", &result, true)
+					mu.Unlock()
+					return
+				}
 				failed++
 				messages = append(messages, server.Name+": "+err.Error())
 				result := refreshAgentResult{ID: server.ID, Name: server.Name, Status: "failed", Error: err.Error()}
@@ -507,28 +577,32 @@ func (s *Service) SyncAll(ctx context.Context, taskID, taskType string) (*refres
 	if len(messages) > 0 {
 		message := strings.Join(messages, "; ")
 		progress := refreshProgressPayload{
-			TargetType:    "runtime",
+			ResourceType:  "runtime",
 			TotalAgents:   total,
 			StartedAgents: started,
 			SyncedAgents:  synced,
 			FailedAgents:  failed,
+			SkippedAgents: skipped,
 			StartedAt:     startedAt,
 			FinishedAt:    finishedAt,
 			AgentResults:  agentResults,
 			Error:         message,
+			Warn:          refreshProgressWarn(agentResults),
 		}
 		progress.Message = refreshProgressMessage(progress)
 		return &progress, errors.New(message)
 	}
 	progress := refreshProgressPayload{
-		TargetType:    "runtime",
+		ResourceType:  "runtime",
 		TotalAgents:   total,
 		StartedAgents: started,
 		SyncedAgents:  synced,
 		FailedAgents:  failed,
+		SkippedAgents: skipped,
 		StartedAt:     startedAt,
 		FinishedAt:    finishedAt,
 		AgentResults:  agentResults,
+		Warn:          refreshProgressWarn(agentResults),
 	}
 	progress.Message = refreshProgressMessage(progress)
 	return &progress, nil
@@ -542,7 +616,32 @@ func refreshProgressMessage(progress refreshProgressPayload) string {
 	if progress.TotalAgents == 0 {
 		return "暂无可同步的 Agent"
 	}
-	return "刷新已完成 " + strconv.Itoa(progress.SyncedAgents) + "/" + strconv.Itoa(progress.TotalAgents) + "，异常 " + strconv.Itoa(progress.FailedAgents)
+	message := "刷新已完成 " + strconv.Itoa(progress.SyncedAgents) + "/" + strconv.Itoa(progress.TotalAgents) + "，异常 " + strconv.Itoa(progress.FailedAgents)
+	if progress.SkippedAgents > 0 {
+		message += "，跳过 " + strconv.Itoa(progress.SkippedAgents)
+	}
+	return message
+}
+
+func refreshProgressWarn(results []refreshAgentResult) string {
+	warns := make([]string, 0)
+	for _, result := range results {
+		if strings.TrimSpace(result.Warn) != "" {
+			warns = append(warns, result.Warn)
+		}
+	}
+	return strings.Join(warns, "; ")
+}
+
+func shouldSyncServerForTask(taskType string, server domain.Server) bool {
+	switch taskType {
+	case RefreshDNSAllType:
+		return isDNSServer(server)
+	case RefreshDHCPAllType:
+		return isDHCPServer(server)
+	default:
+		return true
+	}
 }
 
 func (s *Service) SyncDNSZone(ctx context.Context, serverID, zoneName string) error {
@@ -585,7 +684,21 @@ func (s *Service) syncServer(ctx context.Context, server domain.Server) error {
 }
 
 func (s *Service) syncServerWithLimits(ctx context.Context, server domain.Server, limits runtimeLimits) error {
-	s.markAgentSyncRunning(ctx, server, limits.AgentFullSyncTimeout+time.Minute)
+	lockTTL := limits.AgentFullSyncTimeout + time.Minute
+	lock, locked, err := s.realtime.TryLock(ctx, agentSyncLockKey(server.ID), lockTTL)
+	if err != nil {
+		s.logger.Warn("Acquire agent sync lock failed", "server", server.ID, "error", err)
+	} else if !locked {
+		return errAgentSyncRunning
+	}
+	if locked {
+		defer func() {
+			if err := s.realtime.Unlock(context.Background(), lock); err != nil {
+				s.logger.Warn("Release agent sync lock failed", "server", server.ID, "error", err)
+			}
+		}()
+	}
+	s.markAgentSyncRunning(ctx, server, lockTTL)
 	defer s.clearAgentSyncRunning(context.Background(), server.ID)
 
 	status := "Online"
@@ -631,8 +744,16 @@ func (s *Service) syncServerWithLimits(ctx context.Context, server domain.Server
 	return nil
 }
 
+func isAgentSyncRunningError(err error) bool {
+	return errors.Is(err, errAgentSyncRunning)
+}
+
 func agentSyncRuntimeKey(serverID string) string {
 	return "zonelease:runtime:agent-sync:" + strings.TrimSpace(serverID)
+}
+
+func agentSyncLockKey(serverID string) string {
+	return "zonelease:lock:agent-sync:" + strings.TrimSpace(serverID)
 }
 
 func (s *Service) markAgentSyncRunning(ctx context.Context, server domain.Server, ttl time.Duration) {
@@ -658,6 +779,10 @@ func (s *Service) clearAgentSyncRunning(ctx context.Context, serverID string) {
 	if err := s.realtime.Delete(ctx, agentSyncRuntimeKey(serverID)); err != nil {
 		s.logger.Warn("Clear agent sync runtime failed", "server", serverID, "error", err)
 	}
+}
+
+func (s *Service) IsAgentSyncRunning(ctx context.Context, serverID string) bool {
+	return s.isAgentSyncRunning(ctx, serverID)
 }
 
 func (s *Service) isAgentSyncRunning(ctx context.Context, serverID string) bool {
@@ -1069,10 +1194,18 @@ func (s *Service) refreshTaskLockTTL(ctx context.Context) time.Duration {
 	return ttl
 }
 
+func RefreshTaskLockKey(taskType string, target any) string {
+	return refreshTaskLockKey(taskType, target)
+}
+
 func refreshTaskLockKey(taskType string, target any) string {
 	switch taskType {
-	case RefreshAllType, RefreshFastType:
+	case RefreshAllType:
 		return "zonelease:lock:refresh:all"
+	case RefreshDNSAllType:
+		return "zonelease:lock:refresh:dns-all"
+	case RefreshDHCPAllType:
+		return "zonelease:lock:refresh:dhcp-all"
 	case RefreshServerType:
 		serverTarget, ok := target.(*ServerTarget)
 		if !ok || strings.TrimSpace(serverTarget.ServerID) == "" {

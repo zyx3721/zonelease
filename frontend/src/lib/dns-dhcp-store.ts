@@ -512,12 +512,12 @@ export function removeServer(id: string) {
 }
 
 export function pingServer(id: string, options: { mode?: 'auto' } = {}) {
-	const query = options.mode ? `?mode=${encodeURIComponent(options.mode)}` : '';
-	return mutate(
-		api<{ status: string; detail: string }>(`/api/servers/${encodeURIComponent(id)}/ping${query}`, {
-			method: 'POST',
-		})
-	).finally(emitNotificationRefresh);
+  const query = options.mode ? `?mode=${encodeURIComponent(options.mode)}` : '';
+  return mutate(
+    api<{ status: string; detail: string }>(`/api/servers/${encodeURIComponent(id)}/ping${query}`, {
+      method: 'POST',
+    })
+  ).finally(emitNotificationRefresh);
 }
 
 export function syncServer(id: string) {
@@ -562,10 +562,22 @@ export async function waitRefreshTask(
   const intervalMs = options.intervalMs ?? 1200;
   const configuredTimeoutMs = getBaseConfigSnapshot().agentFullSyncTimeoutSeconds * 1000;
   const expiresAt = Date.now() + (options.timeoutMs ?? configuredTimeoutMs + 10_000);
+  let missingCount = 0;
   while (Date.now() <= expiresAt) {
     const result = await fetchRefreshTasks('all');
     const task = result.items.find(item => item.id === taskId);
-    if (task?.status === 'completed') return task;
+    if (!task) {
+      missingCount++;
+      if (missingCount >= 3) {
+        throw new Error('刷新任务已跳过，请稍后查看同步结果');
+      }
+      await wait(intervalMs);
+      continue;
+    }
+    missingCount = 0;
+    if (task?.status === 'completed') {
+      return task;
+    }
     if (task?.status === 'failed') {
       throw new Error(refreshTaskMessage(task) || 'Agent 同步任务失败');
     }

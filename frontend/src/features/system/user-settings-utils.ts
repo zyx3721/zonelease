@@ -119,11 +119,22 @@ export function upsertById<T extends { id: string }>(items: T[], item: T) {
 }
 
 export function groupPermissions(permissions: UserPermission[]) {
-  return permissions.reduce<Record<string, UserPermission[]>>((groups, permission) => {
+  return permissions.reduce<Record<string, UserPermission[]>>((groups, item) => {
+    const permission = describePermissionPairing(item);
     const category = permission.category || '其他';
     groups[category] = [...(groups[category] ?? []), permission];
     return groups;
   }, {});
+}
+
+function describePermissionPairing(permission: UserPermission): UserPermission {
+  if (permission.key === 'refresh.manage') {
+    return {
+      ...permission,
+      description: `${permission.description}，通常建议搭配 audit.read 查看任务执行记录`,
+    };
+  }
+  return permission;
 }
 
 export function filterPermissionGroups(

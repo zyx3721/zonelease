@@ -1169,7 +1169,12 @@ function Update-DhcpScope {
     $commands += ,@("scope", $ScopeId, "set", "name", $name)
   }
   if (Test-ChangedField -Body $Body -Name "description") {
-    $commands += ,@("scope", $ScopeId, "set", "comment", $description)
+    if (Test-BlankString $description) {
+      $commands += ,@("scope", $ScopeId, "set", "comment")
+    }
+    else {
+      $commands += ,@("scope", $ScopeId, "set", "comment", $description)
+    }
   }
   if (Test-ChangedField -Body $Body -Name "gateway") {
     if (Test-BlankString $defaultGateway) { throw "default gateway is required" }

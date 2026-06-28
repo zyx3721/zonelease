@@ -52,8 +52,8 @@ type Store interface {
 	GetAuthProvider(ctx context.Context, id string) (domain.AuthProvider, error)
 	RecordUserLogin(ctx context.Context, userID string) error
 	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
-	CreateSession(ctx context.Context, token string, userID string, expiresAt time.Time) error
-	FindSession(ctx context.Context, token string) (domain.User, time.Time, time.Time, error)
+	CreateSession(ctx context.Context, token string, userID string, provider string, expiresAt time.Time) error
+	FindSession(ctx context.Context, token string) (domain.User, string, time.Time, time.Time, error)
 	TouchSession(ctx context.Context, token string) error
 	DeleteSession(ctx context.Context, token string) error
 	DeleteUserSessions(ctx context.Context, userID string) error
@@ -108,7 +108,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (domain.
 	if err := repository.VerifyPassword(passwordHash, password); err != nil {
 		return domain.Session{}, ErrInvalidCredentials
 	}
-	return s.createSession(ctx, user)
+	return s.createSession(ctx, user, "local")
 }
 
 func (s *Service) LoginWithProvider(ctx context.Context, providerID, username, password string) (domain.Session, error) {
@@ -131,7 +131,7 @@ func (s *Service) LoginWithProvider(ctx context.Context, providerID, username, p
 	if err != nil || stored.Disabled {
 		return domain.Session{}, ErrUserNotProvisioned
 	}
-	return s.createSession(ctx, stored)
+	return s.createSession(ctx, stored, provider.ID)
 }
 
 func TestLDAPProvider(ctx context.Context, provider domain.AuthProvider) (LDAPTestResult, error) {
@@ -213,7 +213,7 @@ func (s *Service) Validate(ctx context.Context, token string) (domain.Session, e
 		return domain.Session{}, ErrInvalidSession
 	}
 	_ = s.store.DeleteExpiredSessions(ctx)
-	user, expiresAt, lastSeenAt, err := s.store.FindSession(ctx, token)
+	user, provider, expiresAt, lastSeenAt, err := s.store.FindSession(ctx, token)
 	now := s.now()
 	if err != nil || !expiresAt.After(now) || !lastSeenAt.Add(s.cfg.SessionIdleTTL).After(now) || user.Disabled {
 		return domain.Session{}, ErrInvalidSession
@@ -224,7 +224,7 @@ func (s *Service) Validate(ctx context.Context, token string) (domain.Session, e
 		}
 		lastSeenAt = now
 	}
-	return domain.Session{Token: token, ExpiresAt: expiresAt, LastSeenAt: lastSeenAt, User: user}, nil
+	return domain.Session{Token: token, Provider: normalizeSessionProvider(provider), ExpiresAt: expiresAt, LastSeenAt: lastSeenAt, User: user}, nil
 }
 
 func (s *Service) Logout(ctx context.Context, token string) error {
@@ -253,20 +253,29 @@ func (s *Service) ChangePassword(ctx context.Context, userID, oldPassword, newPa
 	return s.store.UpdateUserPassword(ctx, user.ID, hash)
 }
 
-func (s *Service) createSession(ctx context.Context, user domain.User) (domain.Session, error) {
+func (s *Service) createSession(ctx context.Context, user domain.User, provider string) (domain.Session, error) {
 	token, err := randomToken(32)
 	if err != nil {
 		return domain.Session{}, err
 	}
 	now := s.now()
 	expiresAt := now.Add(s.cfg.SessionTTL)
-	if err := s.store.CreateSession(ctx, token, user.ID, expiresAt); err != nil {
+	provider = normalizeSessionProvider(provider)
+	if err := s.store.CreateSession(ctx, token, user.ID, provider, expiresAt); err != nil {
 		return domain.Session{}, err
 	}
 	if err := s.store.RecordUserLogin(ctx, user.ID); err != nil {
 		return domain.Session{}, err
 	}
-	return domain.Session{Token: token, ExpiresAt: expiresAt, LastSeenAt: now, User: user}, nil
+	return domain.Session{Token: token, Provider: provider, ExpiresAt: expiresAt, LastSeenAt: now, User: user}, nil
+}
+
+func normalizeSessionProvider(provider string) string {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return "local"
+	}
+	return provider
 }
 
 type LDAPConfig struct {

@@ -40,9 +40,9 @@ DNS 区域写入 `dns_zones`：
 | :--------------: | :-------------------: | :--------------------------: |
 |       `id`       | 后端生成的区域稳定 ID | `server_id + zone name` 编码 |
 |      `name`      |       区域名称        |          DNS Agent           |
-|      `type`      |       区域类型        |  DNS Agent，默认 `Primary`   |
+|      `type`      |       区域类型        | DNS Agent，新建区域默认 `Primary` |
 |    `reverse`     |     是否反向区域      |          DNS Agent           |
-| `dynamic_update` |     动态更新模式      |    DNS Agent，默认 `None`    |
+| `dynamic_update` |     动态更新模式      | DNS Agent，新建区域默认 `None` |
 |   `server_id`    |      所属服务器       |        平台服务器登记        |
 |  `sync_status`   |       同步状态        |         后端同步服务         |
 | `last_synced_at` |     最近同步时间      |         后端同步服务         |
@@ -85,7 +85,7 @@ DNS Agent 记录采集支持以下类型：
 
 新建记录前，后端会直接基于 PostgreSQL 中的当前区域记录快照做冲突校验：
 
-- 前端新建记录类型只开放 `A (或 AAAA)` 和 `CNAME`；`A (或 AAAA)` 按 Windows DNS“新建主机”语义提交为 `A` 记录。
+- 前端新建记录类型只开放 `A` 和 `CNAME`；`A` 按 Windows DNS“新建主机”语义提交为 `A` 记录。
 - 名称、类型和值完全相同的记录已存在时，拒绝创建。
 - 同名已存在 CNAME 记录时，拒绝创建其他类型记录。
 - 同名已存在其他类型记录时，拒绝创建 CNAME 记录。
@@ -101,13 +101,13 @@ DNS Agent 记录采集支持以下类型：
 - 正向区域仅支持编辑和删除 A / CNAME 记录。
 - 反向区域仅支持编辑和删除 PTR 记录。
 - 其他记录类型的操作按钮会禁用并显示对应提示。
-- A / AAAA 记录会额外展示“更新相关的指针 PTR 记录”配置项，初始启用状态取自该记录创建或上次编辑时保存的 `create_ptr` 标记。
+- A 记录会额外展示“更新相关的指针 PTR 记录”配置项，初始启用状态取自该记录创建或上次编辑时保存的 `create_ptr` 标记。
 - 允许只切换 PTR 标记而不修改记录值。
 
 后端仍以数据库快照为准读取旧记录，并执行以下校验：
 
 - 名称、类型、所属区域发生变化时拒绝更新。
-- 新值与旧值完全相同且 PTR 标记未变化时，后端直接返回当前记录并写入更新审计。
+- 新值与旧值完全相同且 PTR 标记未变化时，后端不会调用 Agent 更新记录，但仍会返回当前记录、写入更新审计并按当前区域排队局部刷新。
 - 同区域内已存在同名、同类型、同值的其他记录时拒绝更新。
 - A 记录值必须是合法 IPv4 地址。
 - CNAME 记录值必须是以 `.` 结尾的合法域名。
@@ -153,7 +153,9 @@ DNS Agent 记录采集支持以下类型：
 
 DNS 区域创建和 DNS 记录变更后的二次同步等待时间由「系统配置 / 基础配置 / 同步参数」中的操作后刷新等待控制，默认 `10` 秒，可配置 `1` 到 `60` 秒。同一区域在等待窗口内继续发生 DNS 操作时，计时会重新开始；同一区域仍有操作正在执行时，后端会等操作结束后再开始等待窗口。
 
-DNS 区域创建、区域删除、记录创建和记录删除的整体超时时间由「系统配置 / 基础配置 / Agent 判定」中的 Agent 操作超时控制，默认 `20` 秒，可配置 `1` 到 `60` 秒。
+如果目标 DNS Agent 正在执行手动全量同步、DNS 定时全量同步或单 Agent 同步，DNS 区域和记录管理操作会返回“当前 Agent 正在同步，请稍后再操作”，避免操作与 Agent 同步任务并发访问同一 Agent。DNS 区域局部刷新不写入 Agent 同步运行态，只通过同目标刷新锁避免重复刷新。
+
+DNS 区域创建、区域删除、记录创建、记录编辑和记录删除的整体超时时间由「系统配置 / 基础配置 / Agent 判定」中的 Agent 操作超时控制，默认 `20` 秒，可配置 `1` 到 `60` 秒。
 
 DNS 区域同步和全量同步中的 DNS 记录采集由「系统配置 / 基础配置 / Agent 判定」中的 Agent 全量同步超时控制，默认 `300` 秒，可配置 `60` 到 `600` 秒。
 
@@ -187,7 +189,7 @@ frontend DNS page
 
 前端展示规则：
 
-- 左侧区域列表支持按区域名称、区域类型、正向和反向标识搜索，搜索只过滤当前 Agent 的数据库快照。
+- 左侧区域列表支持按区域名称、区域类型以及正向 / 反向标识搜索，搜索只过滤当前 Agent 的数据库快照。
 - 左侧区域排序先显示正向区域，再显示反向区域，同类区域按自然顺序升序。
 - 右侧记录默认按记录名称层级排序，同层级下按域名 label 从右向左自然比较，让同一父级或后缀下的二级、三级记录相邻展示。
 - 右侧名称、类型和值表头仍支持升序、降序和不排序三态切换。
@@ -207,7 +209,7 @@ POST /api/refresh
 runtime.refresh.all
 ```
 
-后端会遍历所有已登记服务器：
+后端会遍历所有可同步 Agent。可同步 Agent 指已登记、配置了 Agent URL，且角色匹配本次刷新类型的服务器：
 
 - `DNS` 角色服务器执行 DNS 同步。
 - `DHCP` 角色服务器执行 DHCP 同步。
@@ -215,16 +217,18 @@ runtime.refresh.all
 
 ### 3.3 定时全量刷新
 
-后端通过 `RUNTIME_DEEP_SYNC_INTERVAL` 周期执行全量同步：
+后端通过 `RUNTIME_DNS_DEEP_SYNC_INTERVAL` 周期执行 DNS 全量同步：
 
-- 默认 `0`，即关闭。
-- 设置为大于 `0` 的 Go duration 可启用。
-- 创建 `runtime.refresh.all` 任务。
+- 默认 `1d`，即每天执行一次。
+- 支持 `m`、`h`、`d` 单位，例如 `30m`、`2h`、`1d`。
+- 能整除 24 小时的短间隔按本地当天零点对齐；按天配置的间隔按本地自然日零点对齐，例如 `2d` 从当前本地日期零点起算下一个两天边界；不能整除 24 小时且不是整天数的间隔按 Unix epoch `1970-01-01 00:00:00 UTC` 起算的固定周期对齐。
+- 设置为 `0` 可关闭 DNS 定时全量同步。
+- 创建 `runtime.refresh.dns.all` 任务，只同步 DNS Agent。
 - 不会因为前端页面刷新而触发。
 
 DNS Agent 状态更新规则如下：
 
-- 后台同步和后端自动连通性检查会先访问 Agent `/health`。
+- 后台同步会先访问 Agent `/health`；后端自动连通性检查只检查已配置 Agent URL 且当前未处于同步中的 Agent。
 - 后端自动连通性检查的检查间隔和并发数量由「系统配置 / 基础配置 / Agent 判定」控制，默认每 `1` 分钟串行检查。
 - `/health` 失败会累计 `servers.failure_count`。
 - 连续失败次数达到「系统配置 / 基础配置 / Agent 判定」中的离线失败次数后，服务器状态才会标记为 `Offline`，并在状态从非 `Offline` 进入 `Offline` 时创建 Agent 离线通知。
@@ -254,13 +258,13 @@ DNS 区域卡片右侧刷新按钮调用：
 POST /api/dns/zones/{id}/refresh
 ```
 
-后端创建任务：
+目标 Agent 未同步且同目标刷新未运行时，后端创建任务：
 
 ```text
 runtime.refresh.dns.zone
 ```
 
-该任务只访问当前区域：
+如果目标 Agent 正在同步或同目标刷新正在运行，后端返回冲突提示且不创建任务。创建成功后，该任务只访问当前区域：
 
 ```text
 POST /dns/records/query
@@ -272,11 +276,28 @@ POST /dns/records/query
 
 新建 DNS 区域时，前端不再单独选择服务器。后端会使用 DNS 管理页标题行右侧当前选择的 DNS Agent 作为目标服务器。
 
+新建弹窗只保留以下输入：
+
+- 正向 / 反向查找区域模式。
+- 区域名称。
+
+前端不再提供区域类型和动态更新选择。提交时仍按后端当前契约传递默认值：
+
+- `type`: `Primary`
+- `dynamicUpdate`: `None`
+
+创建正向查找区域时按以下规则处理：
+
+- 前端只需要提交域名区域，例如 `example.com`。
+- Go DNS Agent 按 Primary Zone 创建。
+- 后端写入数据库快照时保留 Agent 返回或默认补齐的区域类型和动态更新字段。
+
 创建反向查找区域时按以下规则处理：
 
 - 前端只需要提交网络 ID，例如 `1.168.192`。
 - 后端会自动补充 `.in-addr.arpa` 后缀后再调用 DNS Agent 创建区域。
 - 数据库快照以补全后的区域名写入。
+- Go DNS Agent 同样按 Primary Zone 创建，不再由弹窗选择区域类型。
 - Go DNS Agent 下发 PowerShell 时会把完整反向区域名转换回 `-NetworkId` 需要的网络 ID，避免把 `1.168.192.in-addr.arpa` 误当作网络 ID。
 
 Go DNS Agent 创建区域时按以下顺序执行：
@@ -344,6 +365,7 @@ DNS Agent 提供以下接口：
 |                   `POST /dns/records/delete`                   | 删除指定区域记录，区域名通过 JSON body 的 `zone` 字段传递 |
 |                   `POST /dns/records/update`                   | 更新指定区域记录，区域名通过 JSON body 的 `zone` 字段传递 |
 |                `POST /dns/zones/{zone}/records`                |          创建指定区域记录，保留用于兼容旧 Agent           |
+|                 `PUT /dns/zones/{zone}/records`                |          更新指定区域记录，保留用于兼容旧 Agent           |
 | `DELETE /dns/zones/{zone}/records/{type}/{name}?value={value}` |            删除指定记录，保留用于兼容旧 Agent             |
 
 后端读取指定区域记录时优先调用 `POST /dns/records/query`，避免区域名出现在明文 HTTP URL 路径里，被网络安全设备或代理按域名关键字误拦截。以下情况会回退到 `GET /dns/zones/{zone}/records` 兼容旧版本：
@@ -385,6 +407,7 @@ X-API-Key: <DNS_AGENT_API_KEY>
 任务表：
 
 - `refresh_tasks.type=runtime.refresh.all`
+- `refresh_tasks.type=runtime.refresh.dns.all`
 - `refresh_tasks.type=runtime.refresh.server`
 - `refresh_tasks.type=runtime.refresh.dns.zone`
 
@@ -401,6 +424,7 @@ X-API-Key: <DNS_AGENT_API_KEY>
 SSE 事件：
 
 - `runtime.refresh.all`
+- `runtime.refresh.dns.all`
 - `runtime.refresh.server`
 - `runtime.refresh.dns.zone`
 - `runtime.updated`
@@ -414,6 +438,6 @@ Redis 当前用于刷新事件发布和最近刷新事件缓存，不作为 DNS 
 - DNS Agent PowerShell 命令变化。
 - DNS 区域或记录字段采集、解析、默认值、ID 生成规则变化。
 - DNS 创建、删除、刷新链路变化。
-- `runtime.refresh.dns.zone`、`runtime.refresh.all` 事件或任务 payload 变化。
+- `runtime.refresh.all`、`runtime.refresh.dns.all`、`runtime.refresh.dns.zone` 事件或任务 payload 变化。
 - DNS 页面刷新按钮、加载状态、SSE 订阅或缓存读取规则变化。
 - DNS 相关数据库表、索引、唯一约束或快照替换策略变化。

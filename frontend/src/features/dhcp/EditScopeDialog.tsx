@@ -120,7 +120,9 @@ export function EditScopeDialog({ scope }: { scope: DhcpScope }) {
       <DialogContent onOpenAutoFocus={event => event.preventDefault()}>
         <DialogHeader>
           <DialogTitle>编辑 DHCP 作用域</DialogTitle>
-          <DialogDescription className="sr-only">修改 DHCP 作用域名称、租期和地址范围</DialogDescription>
+          <DialogDescription className="sr-only">
+            修改 DHCP 作用域名称、租期和地址范围
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div>

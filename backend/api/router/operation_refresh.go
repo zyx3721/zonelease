@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ type operationRefreshTarget struct {
 	ServerID        string
 	ZoneID          string
 	ZoneName        string
+	ScopeID         string
 	ScopeExternalID string
 	ScopeName       string
 }
@@ -69,7 +71,11 @@ func (s *operationRefreshScheduler) finish(target operationRefreshTarget) {
 		return
 	}
 	s.mu.Lock()
-	state := s.stateForLocked(key, target)
+	state := s.targets[key]
+	if state == nil {
+		s.mu.Unlock()
+		return
+	}
 	if state.active > 0 {
 		state.active--
 	}
@@ -144,14 +150,23 @@ func (s *operationRefreshScheduler) fire(key string, target operationRefreshTarg
 		}()
 	}
 
+	if s.router.sync != nil && s.router.sync.IsAgentSyncRunning(context.Background(), target.ServerID) {
+		s.logger.Info("Skip operation refresh because agent sync is running", "target", key, "server", target.ServerID)
+		return
+	}
+
 	var refreshErr error
 	switch target.Kind {
 	case operationRefreshDNSZone:
 		_, refreshErr = s.router.enqueueZoneRefresh(target.ServerID, target.ZoneID, target.ZoneName, "")
 	case operationRefreshDHCPScope:
-		_, refreshErr = s.router.enqueueDHCPScopeRefresh(target.ServerID, target.ScopeExternalID, target.ScopeName, "")
+		_, refreshErr = s.router.enqueueDHCPScopeRefresh(target.ServerID, target.ScopeID, target.ScopeExternalID, target.ScopeName, "")
 	}
 	if refreshErr != nil {
+		if errors.Is(refreshErr, errRefreshTargetRunning) {
+			s.logger.Info("Skip operation refresh because target refresh is running", "target", key)
+			return
+		}
 		s.logger.Warn("Operation refresh enqueue failed", "target", key, "error", refreshErr)
 	}
 }

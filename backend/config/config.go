@@ -59,11 +59,12 @@ type AuthConfig struct {
 }
 
 type RuntimeConfig struct {
-	RefreshTTL          time.Duration
-	DeepSyncInterval    time.Duration
-	MetricRetentionDays int
-	LogRetentionDays    int
-	MetricStreamMaxLen  int64
+	RefreshTTL           time.Duration
+	DNSDeepSyncInterval  time.Duration
+	DHCPDeepSyncInterval time.Duration
+	MetricRetentionDays  int
+	LogRetentionDays     int
+	MetricStreamMaxLen   int64
 }
 
 type CORSConfig struct {
@@ -100,11 +101,12 @@ func Load(logger *slog.Logger) (Config, error) {
 			ResetSendCooldownSecs:  30,
 		},
 		Runtime: RuntimeConfig{
-			RefreshTTL:          2 * time.Minute,
-			DeepSyncInterval:    envDurationAllowZero("RUNTIME_DEEP_SYNC_INTERVAL", 0),
-			MetricRetentionDays: envInt("METRIC_RETENTION_DAYS", 30),
-			LogRetentionDays:    envInt("LOG_RETENTION_DAYS", 30),
-			MetricStreamMaxLen:  int64(envInt("METRIC_STREAM_MAXLEN", 10000)),
+			RefreshTTL:           2 * time.Minute,
+			DNSDeepSyncInterval:  envScheduleInterval("RUNTIME_DNS_DEEP_SYNC_INTERVAL", 24*time.Hour),
+			DHCPDeepSyncInterval: envScheduleInterval("RUNTIME_DHCP_DEEP_SYNC_INTERVAL", time.Hour),
+			MetricRetentionDays:  envInt("METRIC_RETENTION_DAYS", 30),
+			LogRetentionDays:     envInt("LOG_RETENTION_DAYS", 30),
+			MetricStreamMaxLen:   int64(envInt("METRIC_STREAM_MAXLEN", 10000)),
 		},
 		CORS: CORSConfig{
 			Origin: env("CORS_ORIGIN", "http://localhost:5173"),
@@ -230,6 +232,36 @@ func envDurationAllowZero(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return parsed
+}
+
+func envScheduleInterval(key string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	if value == "0" {
+		return 0
+	}
+	parsed, err := parseScheduleDuration(value)
+	if err != nil || parsed < 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func parseScheduleDuration(value string) (time.Duration, error) {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return 0, fmt.Errorf("duration cannot be empty")
+	}
+	if strings.HasSuffix(value, "d") {
+		days, err := strconv.Atoi(strings.TrimSpace(strings.TrimSuffix(value, "d")))
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(value)
 }
 
 func randomSecret(size int) (string, error) {

@@ -66,13 +66,14 @@ func (s *Store) EnsureDefaultAdmin(ctx context.Context) error {
 func PermissionsForRole(role string) []string {
 	switch role {
 	case "viewer":
-		return []string{"dashboard.read", "dns.read", "dhcp.read", "servers.read", "audit.read", "settings.base.read", "settings.users.read", "settings.auth.read", "settings.notifications.read"}
+		return []string{"dashboard.read", "dns.read", "dhcp.read", "servers.read", "audit.read", "notifications.read", "settings.base.read", "settings.users.read", "settings.auth.read", "settings.notifications.read"}
 	case "operator":
-		return []string{"dashboard.read", "dns.read", "dns.manage", "dhcp.read", "dhcp.manage", "servers.read", "servers.manage", "audit.read", "refresh.manage", "settings.base.read", "settings.users.read", "settings.auth.read", "settings.notifications.read"}
+		return []string{"dashboard.read", "dns.read", "dns.manage", "dhcp.read", "dhcp.manage", "servers.read", "servers.manage", "audit.read", "refresh.manage", "export.manage", "notifications.read", "notifications.manage", "settings.base.read", "settings.users.read", "settings.auth.read", "settings.notifications.read"}
 	default:
 		return []string{
 			"dashboard.read", "dns.read", "dns.manage", "dhcp.read", "dhcp.manage",
-			"servers.read", "servers.manage", "audit.read", "refresh.manage",
+			"servers.read", "servers.manage", "audit.read", "refresh.manage", "export.manage",
+			"notifications.read", "notifications.manage",
 			"settings.base.read", "settings.base.manage",
 			"settings.users.read", "settings.users.manage",
 			"settings.auth.read", "settings.auth.manage",

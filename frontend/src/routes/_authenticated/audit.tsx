@@ -22,6 +22,7 @@ import {
   type RefreshTask,
 } from '@/lib/dns-dhcp-store';
 import { onZoneLeaseRefresh } from '@/lib/refresh';
+import { getStoredUser, userHasPermission } from '@/lib/auth';
 import { localTimestamp, type ExportColumn } from '@/lib/export-data';
 import { AppTooltip } from '@/components/app-tooltip';
 import { ExportDialog } from '@/components/export-dialog';
@@ -96,6 +97,7 @@ const jsonFilterLabels: Record<
 
 function AuditPage() {
   const db = useDB();
+  const canExport = userHasPermission(getStoredUser(), 'export.manage');
   const [tab, setTab] = useState<TabKey>('tasks');
   const [tasks, setTasks] = useState<RefreshTask[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(true);
@@ -255,7 +257,7 @@ function AuditPage() {
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <PageSizePicker value={pageSize} onChange={setPageSize} />
-          <ExportButton onClick={() => void openExportDialog()} />
+          {canExport ? <ExportButton onClick={() => void openExportDialog()} /> : null}
         </div>
       </div>
 
@@ -830,7 +832,9 @@ function DetailDialog({ detail, onClose }: { detail: DetailItem; onClose: () => 
       <DialogContent className="max-h-[86vh] max-w-4xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription className="sr-only">查看任务或审计记录的详细字段和载荷内容</DialogDescription>
+          <DialogDescription className="sr-only">
+            查看任务或审计记录的详细字段和载荷内容
+          </DialogDescription>
         </DialogHeader>
         <div className="zl-hidden-scrollbar max-h-[72vh] overflow-y-auto">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -988,39 +992,42 @@ function taskTarget(item: RefreshTask) {
 }
 
 function taskTargetParts(type: string, payload?: Record<string, unknown>) {
-  if (type === 'runtime.refresh.all' || type === 'runtime.refresh.fast') {
+  if (
+    type === 'runtime.refresh.all' ||
+    type === 'runtime.refresh.dns.all' ||
+    type === 'runtime.refresh.dhcp.all'
+  ) {
     return { type: 'runtime', id: '-' };
   }
-  const targetType = payload ? stringField(payload, 'targetType') : '';
-  const targetId = payload ? stringField(payload, 'targetId') : '';
-  if (targetType) {
-    return { type: targetType, id: targetId || '-' };
-  }
-  if (type === 'runtime.refresh.server') {
-    return {
-      type: 'server',
-      id: payload
-        ? stringField(payload, 'serverName') || stringField(payload, 'serverId') || '-'
-        : '-',
-    };
-  }
-  if (type === 'runtime.refresh.dns.zone') {
-    return {
-      type: 'dns.zone',
-      id: payload ? stringField(payload, 'zoneName') || stringField(payload, 'zoneId') || '-' : '-',
-    };
-  }
-  if (type === 'runtime.refresh.dhcp.scope') {
-    return {
-      type: 'dhcp.scope',
-      id: payload
-        ? stringField(payload, 'scopeName') || stringField(payload, 'scopeExternalId') || '-'
-        : '-',
-    };
+  const resourceType = payload ? stringField(payload, 'resourceType') : '';
+  const resourceId = payload ? stringField(payload, 'resourceId') : '';
+  const resourceName = payload ? stringField(payload, 'resourceName') : '';
+  if (resourceType) {
+    if (resourceType === 'server') {
+      return {
+        type: 'server',
+        id: payload
+          ? stringField(payload, 'serverName') || resourceName || resourceId || stringField(payload, 'serverId') || '-'
+          : resourceName || resourceId || '-',
+      };
+    }
+    if (resourceType === 'dns.zone') {
+      return {
+        type: prefixedResourceType(resourceType, payload),
+        id: resourceName || resourceId || '-',
+      };
+    }
+    if (resourceType === 'dhcp.scope') {
+      return {
+        type: prefixedResourceType(resourceType, payload),
+        id: resourceName || resourceId || '-',
+      };
+    }
+    return { type: prefixedResourceType(resourceType, payload), id: resourceName || resourceId || '-' };
   }
   return {
-    type: payload ? stringField(payload, 'targetType') || type || '-' : type || '-',
-    id: payload ? stringField(payload, 'targetId') || '-' : '-',
+    type: payload ? stringField(payload, 'resourceType') || type || '-' : type || '-',
+    id: payload ? stringField(payload, 'resourceName') || stringField(payload, 'resourceId') || '-' : '-',
   };
 }
 
@@ -1039,18 +1046,26 @@ function auditResourceType(item: AuditEntry) {
   if (action.startsWith('settings.base.')) return 'system_setting';
   if (action.startsWith('runtime.')) return 'runtime';
   if (action.startsWith('server.')) return 'server';
-  if (action.startsWith('dns.')) return action.includes('.record') ? 'dns.record' : 'dns.zone';
-  if (action.startsWith('dhcp.')) {
-    if (action.includes('.lease')) return 'dhcp.lease';
-    if (action.includes('.reservation')) return 'dhcp.reservation';
-    return 'dhcp.scope';
+  const detail = parsePayload(item.detail);
+  const payload = isPlainObject(detail) ? detail : undefined;
+  if (action.startsWith('dns.')) {
+    return prefixedResourceType(action.includes('.record') ? 'dns.record' : 'dns.zone', payload);
   }
-  const module = (item.module || '').toLowerCase();
-  if (module === 'system') return 'system';
-  if (module === 'server') return 'server';
-  if (module === 'dns') return 'dns';
-  if (module === 'dhcp') return 'dhcp';
+  if (action.startsWith('dhcp.')) {
+    if (action.includes('.lease')) return prefixedResourceType('dhcp.lease', payload);
+    if (action.includes('.exclusion')) return prefixedResourceType('dhcp.exclusion', payload);
+    if (action.includes('.reservation')) return prefixedResourceType('dhcp.reservation', payload);
+    return prefixedResourceType('dhcp.scope', payload);
+  }
   return item.module || '-';
+}
+
+function prefixedResourceType(type: string, payload?: Record<string, unknown>) {
+  const isResourceType =
+    type === 'dns' || type === 'dhcp' || type.startsWith('dns.') || type.startsWith('dhcp.');
+  if (!payload || !isResourceType) return type;
+  const agent = stringField(payload, 'serverName');
+  return agent ? `${agent}.${type}` : type;
 }
 
 function stringField(payload: Record<string, unknown>, key: string) {
@@ -1060,17 +1075,33 @@ function stringField(payload: Record<string, unknown>, key: string) {
 
 function taskProgress(task: RefreshTask) {
   const payload = parsePayload(task.payload) as
-    | { totalAgents?: number; syncedAgents?: number; failedAgents?: number; message?: string }
+    | {
+        totalAgents?: number;
+        syncedAgents?: number;
+        failedAgents?: number;
+        skippedAgents?: number;
+        message?: string;
+      }
     | undefined;
   if (!payload || typeof payload !== 'object') return '-';
   if (typeof payload.totalAgents !== 'number') return payload.message || '-';
-  return `${payload.syncedAgents ?? 0}/${payload.totalAgents}，异常 ${payload.failedAgents ?? 0}`;
+  let progress = `${payload.syncedAgents ?? 0}/${payload.totalAgents}，异常 ${payload.failedAgents ?? 0}`;
+  if ((payload.skippedAgents ?? 0) > 0) {
+    progress += `，跳过 ${payload.skippedAgents}`;
+  }
+  return progress;
 }
 
 function taskError(task: RefreshTask) {
   const payload = parsePayload(task.payload);
   if (!isPlainObject(payload)) return '-';
   return stringField(payload, 'error') || '-';
+}
+
+function taskWarn(task: RefreshTask) {
+  const payload = parsePayload(task.payload);
+  if (!isPlainObject(payload)) return '-';
+  return stringField(payload, 'warn') || '-';
 }
 
 function detailRows(detail: NonNullable<DetailItem>) {
@@ -1083,6 +1114,7 @@ function detailRows(detail: NonNullable<DetailItem>) {
       { label: '目标', value: taskTarget(item) },
       { label: '进度', value: taskProgress(item) },
       { label: '错误信息', value: taskError(item) },
+      { label: '警告信息', value: taskWarn(item) },
       { label: '创建时间', value: fullTime(item.createdAt) },
       { label: '完成时间', value: item.finishedAt ? fullTime(item.finishedAt) : '-' },
     ];
@@ -1100,18 +1132,114 @@ function detailRows(detail: NonNullable<DetailItem>) {
 
 function extraPayload(detail: NonNullable<DetailItem>) {
   const value = detail.type === 'tasks' ? detail.item.payload : detail.item.detail;
-  const parsed = parsePayload(value);
+  const parsed = detail.type === 'audit' ? sanitizedAuditDetail(value) : parsePayload(value);
   if (!parsed) return null;
+  const normalized = detail.type === 'tasks' ? normalizedTaskPayload(detail.item.type, parsed) : parsed;
   return {
     title: detail.type === 'tasks' ? '任务载荷' : '审计元数据',
-    value: typeof parsed === 'object' ? JSON.stringify(parsed, null, 2) : String(parsed),
+    value: typeof normalized === 'object' ? JSON.stringify(normalized, null, 2) : String(normalized),
   };
 }
 
-function exportPayload(value: unknown) {
+function exportPayload(value: unknown, type?: string) {
   const parsed = parsePayload(value);
   if (!parsed) return '-';
-  return typeof parsed === 'object' ? JSON.stringify(parsed) : String(parsed);
+  const normalized = type ? normalizedTaskPayload(type, parsed) : parsed;
+  return typeof normalized === 'object' ? JSON.stringify(normalized) : String(normalized);
+}
+
+function normalizedTaskPayload(type: string, value: unknown) {
+  if (!isPlainObject(value)) return value;
+  if (isFullRefreshTask(type)) {
+    return orderedPayload(value, [
+      'message',
+      'warn',
+      'startedAt',
+      'finishedAt',
+      'totalAgents',
+      'startedAgents',
+      'syncedAgents',
+      'skippedAgents',
+      'failedAgents',
+      'resourceType',
+      'agentResults',
+    ]);
+  }
+  if (isTargetRefreshTask(type)) {
+    return orderedPayload(value, [
+      'message',
+      'resourceType',
+      'resourceId',
+      'resourceName',
+      'serverId',
+      'serverName',
+    ]);
+  }
+  return value;
+}
+
+function orderedPayload(value: Record<string, unknown>, priority: string[]) {
+  const ordered: Record<string, unknown> = {};
+  for (const key of priority) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      ordered[key] = value[key];
+    }
+  }
+  for (const [key, item] of Object.entries(value)) {
+    if (!Object.prototype.hasOwnProperty.call(ordered, key)) {
+      ordered[key] = item;
+    }
+  }
+  return ordered;
+}
+
+function isFullRefreshTask(type: string) {
+  return (
+    type === 'runtime.refresh.all' ||
+    type === 'runtime.refresh.dns.all' ||
+    type === 'runtime.refresh.dhcp.all'
+  );
+}
+
+function isTargetRefreshTask(type: string) {
+  return (
+    type === 'runtime.refresh.server' ||
+    type === 'runtime.refresh.dns.zone' ||
+    type === 'runtime.refresh.dhcp.scope'
+  );
+}
+
+function sanitizedAuditDetail(value: unknown) {
+  const parsed = parsePayload(value);
+  if (!isPlainObject(parsed)) return parsed;
+  const result = { ...parsed };
+  if (stringField(result, 'serverName') && stringField(result, 'server')) {
+    delete result.server;
+  }
+  return orderedAuditDetail(result);
+}
+
+function orderedAuditDetail(detail: Record<string, unknown>) {
+  const ordered: Record<string, unknown> = {};
+  const priority = [
+    'zoneId',
+    'zoneName',
+    'scopeId',
+    'scopeName',
+    'serverId',
+    'serverName',
+  ];
+  for (const key of priority) {
+    if (Object.prototype.hasOwnProperty.call(detail, key)) {
+      ordered[key] = detail[key];
+    }
+  }
+  for (const [key, value] of Object.entries(detail)) {
+    if (!Object.prototype.hasOwnProperty.call(ordered, key)) {
+      ordered[key] = value;
+    }
+  }
+  return ordered;
 }
 
 function fullTime(value?: string) {
@@ -1151,6 +1279,15 @@ function statusTone(status: string): Tone {
   return 'gray';
 }
 
+function labelResult(result: string) {
+  return (
+    {
+      success: '成功',
+      failed: '失败',
+    }[result] ?? result
+  );
+}
+
 function labelTaskType(type: string) {
   return type;
 }
@@ -1174,6 +1311,7 @@ function normalizedAuditAction(action: string) {
   return (
     {
       'User login': 'auth.login',
+      'User logout': 'auth.logout',
       'Changed password': 'auth.password.change',
       'Queued refresh': 'runtime.refresh',
       'Created server': 'server.create',
@@ -1185,11 +1323,17 @@ function normalizedAuditAction(action: string) {
       'Deleted zone': 'dns.zone.delete',
       'Created DNS record': 'dns.record.create',
       'Deleted DNS record': 'dns.record.delete',
+      'Updated DNS record': 'dns.record.update',
       'Created DHCP scope': 'dhcp.scope.create',
+      'Queued DHCP scope refresh': 'dhcp.scope.refresh',
       'Toggled DHCP scope': 'dhcp.scope.toggle',
+      'Updated DHCP scope': 'dhcp.scope.update',
       'Deleted DHCP scope': 'dhcp.scope.delete',
       'Released DHCP lease': 'dhcp.lease.release',
+      'Created DHCP exclusion': 'dhcp.exclusion.create',
+      'Deleted DHCP exclusion': 'dhcp.exclusion.delete',
       'Created DHCP reservation': 'dhcp.reservation.create',
+      'Updated DHCP reservation': 'dhcp.reservation.update',
       'Deleted DHCP reservation': 'dhcp.reservation.delete',
       'Updated system base config': 'settings.base.update',
     }[action] ?? action
@@ -1203,21 +1347,25 @@ const taskExportColumns: ExportColumn<RefreshTask>[] = [
   { id: 'target', header: '目标', value: item => taskTarget(item) },
   { id: 'progress', header: '进度', value: item => taskProgress(item) },
   { id: 'error', header: '错误信息', value: item => taskError(item) },
+  { id: 'warn', header: '警告信息', value: item => taskWarn(item) },
   { id: 'createdAt', header: '创建时间', value: item => fullTime(item.createdAt) },
   {
     id: 'finishedAt',
     header: '完成时间',
     value: item => (item.finishedAt ? fullTime(item.finishedAt) : '-'),
   },
-  { id: 'payload', header: '载荷', value: item => exportPayload(item.payload) },
+  { id: 'payload', header: '载荷', value: item => exportPayload(item.payload, item.type) },
 ];
 
 const auditExportColumns: ExportColumn<AuditEntry>[] = [
   { id: 'id', header: '审计 ID', value: item => item.id },
   { id: 'action', header: '动作', value: item => labelAction(item.action) },
+  { id: 'module', header: '模块', value: item => labelModule(item.module) },
+  { id: 'result', header: '结果', value: item => labelResult(item.result) },
   { id: 'user', header: '用户', value: item => item.user || '-' },
+  { id: 'resourceType', header: '资源类型', value: item => auditResourceType(item) },
   { id: 'target', header: '资源', value: item => auditResource(item) },
   { id: 'ip', header: 'IP', value: item => item.ipAddress || '-' },
   { id: 'time', header: '时间', value: item => fullTime(item.ts) },
-  { id: 'detail', header: '元数据', value: item => exportPayload(item.detail) },
+  { id: 'detail', header: '详情', value: item => exportPayload(sanitizedAuditDetail(item.detail)) },
 ];

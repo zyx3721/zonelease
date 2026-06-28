@@ -3,6 +3,7 @@ package sync
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"zonelease/backend/internal/agent"
 	"zonelease/backend/internal/domain"
@@ -24,6 +25,33 @@ func TestIsReverseDNSZoneName(t *testing.T) {
 				t.Fatalf("isReverseDNSZoneName(%q)=%v, want %v", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestNextScheduledRoleRefreshDelayAlignsHourlyBoundary(t *testing.T) {
+	now := time.Date(2026, 6, 27, 21, 30, 10, 0, time.Local)
+	got := nextScheduledRoleRefreshDelay(now, time.Hour)
+	want := 29*time.Minute + 50*time.Second
+	if got != want {
+		t.Fatalf("unexpected hourly delay: got %s, want %s", got, want)
+	}
+}
+
+func TestNextScheduledRoleRefreshDelayAlignsDailyBoundary(t *testing.T) {
+	now := time.Date(2026, 6, 27, 21, 30, 10, 0, time.Local)
+	got := nextScheduledRoleRefreshDelay(now, 24*time.Hour)
+	want := 2*time.Hour + 29*time.Minute + 50*time.Second
+	if got != want {
+		t.Fatalf("unexpected daily delay: got %s, want %s", got, want)
+	}
+}
+
+func TestNextScheduledRoleRefreshDelayAlignsMultiDayBoundary(t *testing.T) {
+	now := time.Date(2026, 6, 27, 21, 30, 10, 0, time.Local)
+	got := nextScheduledRoleRefreshDelay(now, 48*time.Hour)
+	want := 26*time.Hour + 29*time.Minute + 50*time.Second
+	if got != want {
+		t.Fatalf("unexpected multi-day delay: got %s, want %s", got, want)
 	}
 }
 
@@ -122,5 +150,49 @@ func TestAgentCanFallbackToPathRecordQueryForLegacyJSONParserError(t *testing.T)
 	}
 	if !agentCanFallbackToPathRecordQuery(err) {
 		t.Fatal("expected legacy JSON parser error to allow path query fallback")
+	}
+}
+
+func TestRefreshTaskPayloadUsesDHCPScopeResourceFields(t *testing.T) {
+	payload := refreshTaskPayload(RefreshDHCPScopeType, &DHCPScopeTarget{
+		ServerID:        "server-1",
+		ServerName:      "DHCP-01",
+		ScopeID:         "scope-db-id",
+		ScopeExternalID: "10.22.50.0",
+		ScopeName:       "办公网段",
+	}, "刷新任务运行中", "")
+
+	if payload["resourceType"] != "dhcp.scope" {
+		t.Fatalf("expected resourceType to use dhcp scope, got %v", payload["resourceType"])
+	}
+	if payload["resourceId"] != "scope-db-id" {
+		t.Fatalf("expected resourceId to use scope id, got %v", payload["resourceId"])
+	}
+	if payload["resourceName"] != "办公网段" {
+		t.Fatalf("expected resourceName to keep display name, got %v", payload["resourceName"])
+	}
+	if _, ok := payload["scopeExternalId"]; ok {
+		t.Fatalf("expected scopeExternalId to stay out of task payload, got %v", payload["scopeExternalId"])
+	}
+	if _, ok := payload["targetId"]; ok {
+		t.Fatalf("expected targetId to stay out of task payload, got %v", payload["targetId"])
+	}
+	if _, ok := payload["scopeId"]; ok {
+		t.Fatalf("expected scopeId to stay out of task payload, got %v", payload["scopeId"])
+	}
+}
+
+func TestRefreshTaskPayloadKeepsDHCPScopeExternalIDInternalOnly(t *testing.T) {
+	payload := refreshTaskPayload(RefreshDHCPScopeType, &DHCPScopeTarget{
+		ServerID:        "server-1",
+		ScopeID:         "scope-db-id",
+		ScopeExternalID: "10.22.50.0",
+	}, "刷新任务运行中", "")
+
+	if payload["resourceId"] != "scope-db-id" {
+		t.Fatalf("expected resourceId to use scope id, got %v", payload["resourceId"])
+	}
+	if _, ok := payload["scopeExternalId"]; ok {
+		t.Fatalf("expected scopeExternalId to stay out of task payload, got %v", payload["scopeExternalId"])
 	}
 }

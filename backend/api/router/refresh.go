@@ -26,6 +26,19 @@ func (r *Router) createRefresh(w http.ResponseWriter, req *http.Request) {
 	if body.Type == "" {
 		body.Type = syncsvc.RefreshAllType
 	}
+	if !isSupportedRefreshType(body.Type) {
+		writeError(w, http.StatusBadRequest, "invalid_refresh_type", "刷新任务类型无效")
+		return
+	}
+	if lockKey := syncsvc.RefreshTaskLockKey(body.Type, nil); lockKey != "" {
+		locked, err := r.realtime.Exists(req.Context(), lockKey)
+		if err != nil {
+			r.logger.Warn("Check refresh task lock failed", "type", body.Type, "lock", lockKey, "error", err)
+		} else if locked {
+			writeError(w, http.StatusConflict, "refresh_running", "当前刷新任务正在执行，请稍后再试")
+			return
+		}
+	}
 	user := currentUser(req)
 	task, err := r.store.CreateRefreshTask(req.Context(), body.Type, map[string]any{
 		"message": "刷新任务已创建",
@@ -38,6 +51,15 @@ func (r *Router) createRefresh(w http.ResponseWriter, req *http.Request) {
 	go r.sync.RunRefreshTask(context.Background(), task.ID, body.Type, nil)
 	r.writeAudit(req, "Queued refresh", body.Type, "System", "success", map[string]any{"task": task.ID, "type": body.Type})
 	writeJSON(w, http.StatusAccepted, task)
+}
+
+func isSupportedRefreshType(taskType string) bool {
+	switch taskType {
+	case syncsvc.RefreshAllType, syncsvc.RefreshDNSAllType, syncsvc.RefreshDHCPAllType:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *Router) refreshTasks(w http.ResponseWriter, req *http.Request) {

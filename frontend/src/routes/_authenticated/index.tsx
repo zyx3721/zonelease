@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { getStoredUser, userHasPermission } from '@/lib/auth';
 import {
   Select,
   SelectContent,
@@ -31,6 +32,7 @@ export const Route = createFileRoute('/_authenticated/')({
 
 function Dashboard() {
   const db = useDB();
+  const canManageServers = userHasPermission(getStoredUser(), 'servers.manage');
   const [checkingServers, setCheckingServers] = useState<Record<string, boolean>>({});
   const [activityLimit, setActivityLimit] = useState('10');
   const checkingRef = useRef<Record<string, boolean>>({});
@@ -105,7 +107,9 @@ function Dashboard() {
             <div>
               <h2 className="text-sm font-semibold">服务器状态</h2>
               <p className="text-xs text-muted-foreground">
-                显示最近一次健康检查结果，点击刷新可手动检查
+                {canManageServers
+                  ? '显示最近一次健康检查结果，点击刷新可手动检查'
+                  : '显示最近一次健康检查结果'}
               </p>
             </div>
           </div>
@@ -145,18 +149,20 @@ function Dashboard() {
                             {s.agentUrl}
                           </div>
                         </div>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8 shrink-0"
-                          disabled={checkingServers[s.id]}
-                          onClick={() => void checkServer(s.id, s.name)}
-                          aria-label={`检查 ${s.name} 连通性`}
-                        >
-                          <RefreshCw
-                            className={`h-3.5 w-3.5 ${checkingServers[s.id] ? 'animate-spin' : ''}`}
-                          />
-                        </Button>
+                        {canManageServers ? (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 shrink-0"
+                            disabled={checkingServers[s.id]}
+                            onClick={() => void checkServer(s.id, s.name)}
+                            aria-label={`检查 ${s.name} 连通性`}
+                          >
+                            <RefreshCw
+                              className={`h-3.5 w-3.5 ${checkingServers[s.id] ? 'animate-spin' : ''}`}
+                            />
+                          </Button>
+                        ) : null}
                       </div>
                       <div className="mt-3 flex items-center justify-between gap-2">
                         <AgentRoleBadge role={s.role} />

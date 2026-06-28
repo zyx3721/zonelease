@@ -77,7 +77,9 @@ export function AddExclusionDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>新增排除范围</DialogTitle>
-          <DialogDescription className="sr-only">填写要从 DHCP 作用域中排除的起始和结束 IP 地址</DialogDescription>
+          <DialogDescription className="sr-only">
+            填写要从 DHCP 作用域中排除的起始和结束 IP 地址
+          </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
           <div>

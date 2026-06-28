@@ -10,6 +10,7 @@ export type NotificationPanelPosition = {
 type NotificationPanelProps = {
   items: NotificationItem[];
   unreadCount: number;
+  canManage: boolean;
   position: NotificationPanelPosition;
   onReadAll: () => void;
   onClear: () => void;
@@ -19,7 +20,7 @@ type NotificationPanelProps = {
 
 export const NotificationPanel = forwardRef<HTMLDivElement, NotificationPanelProps>(
   function NotificationPanel(
-    { items, unreadCount, position, onReadAll, onClear, onOpen, onClose },
+    { items, unreadCount, canManage, position, onReadAll, onClear, onOpen, onClose },
     ref
   ) {
     return (
@@ -43,22 +44,26 @@ export const NotificationPanel = forwardRef<HTMLDivElement, NotificationPanelPro
             </div>
           </div>
           <div className="flex items-center gap-3 text-xs">
-            <button
-              type="button"
-              onClick={onReadAll}
-              className="zl-action-button"
-              style={{ color: 'var(--zl-accent-text)' }}
-            >
-              全部已读
-            </button>
-            <button
-              type="button"
-              onClick={onClear}
-              className="zl-action-button"
-              style={{ color: '#f87171' }}
-            >
-              清空
-            </button>
+            {canManage ? (
+              <>
+                <button
+                  type="button"
+                  onClick={onReadAll}
+                  className="zl-action-button"
+                  style={{ color: 'var(--zl-accent-text)' }}
+                >
+                  全部已读
+                </button>
+                <button
+                  type="button"
+                  onClick={onClear}
+                  className="zl-action-button"
+                  style={{ color: '#f87171' }}
+                >
+                  清空
+                </button>
+              </>
+            ) : null}
             <button
               type="button"
               onClick={onClose}

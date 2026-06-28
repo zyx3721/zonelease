@@ -79,6 +79,11 @@ func (s *Service) Get(ctx context.Context, key string) (string, error) {
 	return s.client.Get(ctx, key).Result()
 }
 
+func (s *Service) Exists(ctx context.Context, key string) (bool, error) {
+	count, err := s.client.Exists(ctx, key).Result()
+	return count > 0, err
+}
+
 func (s *Service) GetJSON(ctx context.Context, key string, dest any) (bool, error) {
 	raw, err := s.client.Get(ctx, key).Result()
 	if err == redis.Nil {

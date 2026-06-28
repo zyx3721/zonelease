@@ -13,12 +13,14 @@ export function AgentScopeToolbar({
   agents,
   value,
   refreshing,
+  canRefresh = true,
   onChange,
   onRefresh,
 }: {
   agents: ServerConfig[];
   value: string;
   refreshing: boolean;
+  canRefresh?: boolean;
   onChange: (value: string) => void;
   onRefresh: () => void;
 }) {
@@ -36,16 +38,18 @@ export function AgentScopeToolbar({
           ))}
         </SelectContent>
       </Select>
-      <Button
-        type="button"
-        variant="outline"
-        className="h-10 gap-2"
-        disabled={!value || refreshing}
-        onClick={onRefresh}
-      >
-        <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-        刷新
-      </Button>
+      {canRefresh ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="h-10 gap-2"
+          disabled={!value || refreshing}
+          onClick={onRefresh}
+        >
+          <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+          刷新
+        </Button>
+      ) : null}
     </div>
   );
 }

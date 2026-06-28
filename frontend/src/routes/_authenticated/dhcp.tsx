@@ -5,10 +5,11 @@ import { AgentScopeToolbar } from '@/components/agent-scope-toolbar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Trash2, Power, Network, Search, RefreshCw } from 'lucide-react';
+import { Download, Trash2, Power, Network, Search, RefreshCw } from 'lucide-react';
 import { AddScopeDialog } from '@/features/dhcp/AddScopeDialog';
 import { DhcpConfirmDialog } from '@/features/dhcp/DhcpConfirmDialog';
 import { DhcpScopeDetailsTabs } from '@/features/dhcp/DhcpScopeDetailsTabs';
+import { DhcpScopeExportDialog } from '@/features/dhcp/DhcpScopeExportDialog';
 import { EditScopeDialog } from '@/features/dhcp/EditScopeDialog';
 import { getStoredUser, userHasPermission } from '@/lib/auth';
 import {
@@ -22,6 +23,7 @@ import {
   type DhcpExclusion,
   type DhcpLease,
   type DhcpReservation,
+  type DhcpScope,
 } from '@/lib/dns-dhcp-store';
 import { taskToastDoneOptionsFor, taskToastOptions } from '@/lib/task-toast';
 
@@ -34,7 +36,10 @@ type PendingScopeAction = 'toggle' | 'delete' | null;
 
 function DhcpPage() {
   const db = useDB();
-  const canManageDhcp = userHasPermission(getStoredUser(), 'dhcp.manage');
+  const user = getStoredUser();
+  const canManageDhcp = userHasPermission(user, 'dhcp.manage');
+  const canRefresh = userHasPermission(user, 'refresh.manage');
+  const canExport = userHasPermission(user, 'export.manage');
   const [selectedId, setSelectedId] = useState<string | null>(db.scopes[0]?.id ?? null);
   const [scopeQuery, setScopeQuery] = useState('');
   const dhcpAgents = useMemo(
@@ -44,6 +49,12 @@ function DhcpPage() {
   const [selectedAgentId, setSelectedAgentId] = useState(dhcpAgents[0]?.id ?? '');
   const [syncingAgent, setSyncingAgent] = useState(false);
   const [refreshingScope, setRefreshingScope] = useState<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportScopes, setExportScopes] = useState<DhcpScope[]>(db.scopes);
+  const [exportExclusions, setExportExclusions] = useState<DhcpExclusion[]>(db.exclusions);
+  const [exportLeases, setExportLeases] = useState<DhcpLease[]>(db.leases);
+  const [exportReservations, setExportReservations] = useState<DhcpReservation[]>(db.reservations);
   const [pendingScopeAction, setPendingScopeAction] = useState<PendingScopeAction>(null);
   const [visibleScopeAction, setVisibleScopeAction] = useState<Exclude<
     PendingScopeAction,
@@ -130,15 +141,16 @@ function DhcpPage() {
     }
   }, [scopes, selectedId]);
 
-  const leases = scope ? (scopeDataById.leasesByScope.get(scope.id) ?? []) : [];
+  const scopeId = scope?.id;
+  const leases = scopeId ? (scopeDataById.leasesByScope.get(scopeId) ?? []) : [];
   const exclusions = useMemo(
     () =>
-      scope
-        ? (scopeDataById.exclusionsByScope.get(scope.id) ?? EMPTY_DHCP_EXCLUSIONS)
+      scopeId
+        ? (scopeDataById.exclusionsByScope.get(scopeId) ?? EMPTY_DHCP_EXCLUSIONS)
         : EMPTY_DHCP_EXCLUSIONS,
-    [scopeDataById, scope?.id]
+    [scopeDataById, scopeId]
   );
-  const reservations = scope ? (scopeDataById.reservationsByScope.get(scope.id) ?? []) : [];
+  const reservations = scopeId ? (scopeDataById.reservationsByScope.get(scopeId) ?? []) : [];
   const dialogScopeAction = pendingScopeAction ?? visibleScopeAction;
   const dialogScopeIsDelete = dialogScopeAction === 'delete';
   const dialogScopeIsActive = scope?.state === 'Active';
@@ -210,6 +222,26 @@ function DhcpPage() {
     }
   }
 
+  async function openExportDialog() {
+    setExportOpen(true);
+    setExportLoading(true);
+    try {
+      const state = await reloadDB();
+      const scopesForAgent = state.scopes.filter(
+        item => !selectedAgentId || item.serverId === selectedAgentId
+      );
+      const scopeIds = new Set(scopesForAgent.map(item => item.id));
+      setExportScopes(scopesForAgent);
+      setExportExclusions(state.exclusions.filter(item => scopeIds.has(item.scopeId)));
+      setExportLeases(state.leases.filter(item => scopeIds.has(item.scopeId)));
+      setExportReservations(state.reservations.filter(item => scopeIds.has(item.scopeId)));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '读取导出数据失败');
+    } finally {
+      setExportLoading(false);
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex shrink-0 flex-wrap items-start justify-between gap-4">
@@ -221,16 +253,40 @@ function DhcpPage() {
             作用域与租约
           </p>
         </div>
-        <AgentScopeToolbar
-          agents={dhcpAgents}
-          value={selectedAgentId}
-          refreshing={syncingAgent}
-          onChange={value => {
-            setSelectedAgentId(value);
-            setSelectedId(null);
-          }}
-          onRefresh={() => void handleAgentRefresh()}
-        />
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <AgentScopeToolbar
+            agents={dhcpAgents}
+            value={selectedAgentId}
+            refreshing={syncingAgent}
+            canRefresh={canRefresh}
+            onChange={value => {
+              setSelectedAgentId(value);
+              setSelectedId(null);
+            }}
+            onRefresh={() => void handleAgentRefresh()}
+          />
+          {canExport ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="zl-action-button h-10 gap-2"
+              disabled={!selectedAgentId || exportLoading}
+              onClick={() => void openExportDialog()}
+              style={{
+                borderColor: 'rgba(59,130,246,0.38)',
+                color: 'var(--zl-accent-text)',
+                background: 'rgba(59,130,246,0.1)',
+              }}
+            >
+              {exportLoading ? (
+                <RefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              导出
+            </Button>
+          ) : null}
+        </div>
       </div>
       <div className="grid min-h-0 flex-1 grid-cols-12 gap-6">
         <section
@@ -308,41 +364,47 @@ function DhcpPage() {
                     <span>{displayText(scope.description)}</span>
                   </p>
                 </div>
-                {canManageDhcp ? (
+                {canRefresh || canManageDhcp ? (
                   <div className="flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={refreshingScope === scope.id}
-                      onClick={() => void handleScopeRefresh(scope.id)}
-                    >
-                      <RefreshCw
-                        className={`h-3.5 w-3.5 mr-1.5 ${refreshingScope === scope.id ? 'animate-spin' : ''}`}
-                      />
-                      刷新
-                    </Button>
-                    <EditScopeDialog scope={scope} />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className={
-                        scope.state === 'Active'
-                          ? 'border-amber-500/35 bg-amber-500/10 text-amber-700 hover:bg-amber-500/16 hover:text-amber-800 dark:text-amber-200 dark:hover:text-amber-100'
-                          : undefined
-                      }
-                      onClick={() => openScopeAction('toggle')}
-                    >
-                      <Power className="h-3.5 w-3.5 mr-1.5" />
-                      {scope.state === 'Active' ? '停用' : '启用'}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-destructive hover:text-destructive"
-                      onClick={() => openScopeAction('delete')}
-                    >
-                      <Trash2 className="h-3.5 w-3.5 mr-1.5" /> 删除
-                    </Button>
+                    {canRefresh ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={refreshingScope === scope.id}
+                        onClick={() => void handleScopeRefresh(scope.id)}
+                      >
+                        <RefreshCw
+                          className={`h-3.5 w-3.5 mr-1.5 ${refreshingScope === scope.id ? 'animate-spin' : ''}`}
+                        />
+                        刷新
+                      </Button>
+                    ) : null}
+                    {canManageDhcp ? (
+                      <>
+                        <EditScopeDialog scope={scope} />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className={
+                            scope.state === 'Active'
+                              ? 'border-amber-500/35 bg-amber-500/10 text-amber-700 hover:bg-amber-500/16 hover:text-amber-800 dark:text-amber-200 dark:hover:text-amber-100'
+                              : undefined
+                          }
+                          onClick={() => openScopeAction('toggle')}
+                        >
+                          <Power className="h-3.5 w-3.5 mr-1.5" />
+                          {scope.state === 'Active' ? '停用' : '启用'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => openScopeAction('delete')}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 mr-1.5" /> 删除
+                        </Button>
+                      </>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -413,6 +475,15 @@ function DhcpPage() {
           if (open && pendingScopeAction) setVisibleScopeAction(pendingScopeAction);
         }}
         onConfirm={() => void handleConfirmedScopeAction()}
+      />
+      <DhcpScopeExportDialog
+        open={exportOpen}
+        loading={exportLoading}
+        scopes={exportScopes}
+        exclusions={exportExclusions}
+        leases={exportLeases}
+        reservations={exportReservations}
+        onClose={() => setExportOpen(false)}
       />
     </div>
   );

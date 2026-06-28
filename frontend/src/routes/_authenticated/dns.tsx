@@ -38,7 +38,10 @@ const RECORD_RENDER_BATCH_SIZE = 200;
 
 function DnsPage() {
   const db = useDB({ includeDns: true });
-  const canManageDns = userHasPermission(getStoredUser(), 'dns.manage');
+  const user = getStoredUser();
+  const canManageDns = userHasPermission(user, 'dns.manage');
+  const canRefresh = userHasPermission(user, 'refresh.manage');
+  const canExport = userHasPermission(user, 'export.manage');
   const [selectedZone, setSelectedZone] = useState<string | null>(db.zones[0]?.id ?? null);
   const [query, setQuery] = useState('');
   const [zoneQuery, setZoneQuery] = useState('');
@@ -223,31 +226,34 @@ function DnsPage() {
             agents={dnsAgents}
             value={selectedAgentId}
             refreshing={syncingAgent}
+            canRefresh={canRefresh}
             onChange={value => {
               setSelectedAgentId(value);
               setSelectedZone(null);
             }}
             onRefresh={() => void handleAgentRefresh()}
           />
-          <Button
-            type="button"
-            variant="outline"
-            className="zl-action-button h-10 gap-2"
-            disabled={!selectedAgentId || exportLoading}
-            onClick={() => void openExportDialog()}
-            style={{
-              borderColor: 'rgba(59,130,246,0.38)',
-              color: 'var(--zl-accent-text)',
-              background: 'rgba(59,130,246,0.1)',
-            }}
-          >
-            {exportLoading ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <Download className="h-4 w-4" />
-            )}
-            导出
-          </Button>
+          {canExport ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="zl-action-button h-10 gap-2"
+              disabled={!selectedAgentId || exportLoading}
+              onClick={() => void openExportDialog()}
+              style={{
+                borderColor: 'rgba(59,130,246,0.38)',
+                color: 'var(--zl-accent-text)',
+                background: 'rgba(59,130,246,0.1)',
+              }}
+            >
+              {exportLoading ? (
+                <RefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              导出
+            </Button>
+          ) : null}
         </div>
       </div>
       <div className="grid min-h-0 flex-1 grid-cols-12 gap-6">
@@ -299,8 +305,9 @@ function DnsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    {canManageDns ? (
+                    {canRefresh || canManageDns ? (
                       <>
+                        {canRefresh ? (
                         <AppTooltip label="刷新区域记录" placement="top">
                           <Button
                             size="icon"
@@ -318,6 +325,8 @@ function DnsPage() {
                             />
                           </Button>
                         </AppTooltip>
+                        ) : null}
+                        {canManageDns ? (
                         <AppTooltip label="删除区域" placement="top">
                           <Button
                             size="icon"
@@ -337,6 +346,7 @@ function DnsPage() {
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </AppTooltip>
+                        ) : null}
                       </>
                     ) : null}
                   </div>

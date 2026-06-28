@@ -1,10 +1,12 @@
 package router
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -123,10 +125,122 @@ func auditMetadata(metadata map[string]any) string {
 		return ""
 	}
 	detail := ""
-	if data, err := json.Marshal(metadata); err == nil {
+	if data, err := marshalOrderedMetadata(metadata); err == nil {
 		detail = string(data)
 	}
 	return detail
+}
+
+func marshalOrderedMetadata(metadata map[string]any) ([]byte, error) {
+	priority := []string{"zoneId", "zoneName", "scopeId", "scopeName", "serverId", "serverName", "host", "agentURL", "status"}
+	keys := make([]string, 0, len(metadata))
+	seen := map[string]struct{}{}
+	for _, key := range priority {
+		if _, ok := metadata[key]; ok {
+			keys = append(keys, key)
+			seen[key] = struct{}{}
+		}
+	}
+	remainingKeys := make([]string, 0, len(metadata)-len(keys))
+	for key := range metadata {
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		remainingKeys = append(remainingKeys, key)
+	}
+	sort.Strings(remainingKeys)
+	keys = append(keys, remainingKeys...)
+
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for index, key := range keys {
+		if index > 0 {
+			buf.WriteByte(',')
+		}
+		keyData, err := json.Marshal(key)
+		if err != nil {
+			return nil, err
+		}
+		valueData, err := json.Marshal(metadata[key])
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(keyData)
+		buf.WriteByte(':')
+		buf.Write(valueData)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+func resourceAuditMetadata(server domain.Server, metadata map[string]any) map[string]any {
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	if strings.TrimSpace(server.Name) != "" {
+		metadata["serverName"] = server.Name
+	}
+	if strings.TrimSpace(server.ID) != "" {
+		metadata["serverId"] = server.ID
+	}
+	return metadata
+}
+
+func serverAuditMetadata(server domain.Server, metadata map[string]any) map[string]any {
+	result := map[string]any{}
+	if strings.TrimSpace(server.ID) != "" {
+		result["serverId"] = server.ID
+	}
+	if strings.TrimSpace(server.Name) != "" {
+		result["serverName"] = server.Name
+	}
+	if strings.TrimSpace(server.Host) != "" {
+		result["host"] = server.Host
+	}
+	if strings.TrimSpace(server.AgentURL) != "" {
+		result["agentURL"] = server.AgentURL
+	}
+	for key, value := range metadata {
+		if key == "server" || key == "serverId" || key == "serverName" || key == "host" || key == "agentURL" {
+			continue
+		}
+		result[key] = value
+	}
+	return result
+}
+
+func dnsAuditMetadata(server domain.Server, zoneID, zoneName string, metadata map[string]any) map[string]any {
+	result := map[string]any{}
+	if strings.TrimSpace(zoneID) != "" {
+		result["zoneId"] = zoneID
+	}
+	if strings.TrimSpace(zoneName) != "" {
+		result["zoneName"] = zoneName
+	}
+	for key, value := range metadata {
+		if key == "zone" || key == "zoneId" || key == "zoneName" {
+			continue
+		}
+		result[key] = value
+	}
+	return resourceAuditMetadata(server, result)
+}
+
+func dhcpScopeAuditMetadata(server domain.Server, scopeID, scopeName string, metadata map[string]any) map[string]any {
+	result := map[string]any{}
+	if strings.TrimSpace(scopeID) != "" {
+		result["scopeId"] = scopeID
+	}
+	if strings.TrimSpace(scopeName) != "" {
+		result["scopeName"] = scopeName
+	}
+	for key, value := range metadata {
+		if key == "scope" || key == "scopeId" || key == "scopeName" {
+			continue
+		}
+		result[key] = value
+	}
+	return resourceAuditMetadata(server, result)
 }
 
 func statusFromErr(err error) int {

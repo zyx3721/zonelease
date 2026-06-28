@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL DEFAULT 'local',
   expires_at TIMESTAMPTZ NOT NULL,
   last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -286,7 +287,7 @@ VALUES
   ('admin', 'admin', '系统配置、Agent 管理、DNS/DHCP 资源和刷新等所有操作', ARRAY[
     'dashboard.read','servers.read','servers.manage',
     'dns.read','dns.manage','dhcp.read','dhcp.manage',
-    'refresh.manage','audit.read',
+    'refresh.manage','audit.read','export.manage','notifications.read','notifications.manage',
     'settings.base.read','settings.base.manage',
     'settings.users.read','settings.users.manage',
     'settings.auth.read','settings.auth.manage',
@@ -295,11 +296,11 @@ VALUES
   ('operator', 'operator', 'DNS/DHCP 资源和 Agent 日常操作，不能修改系统配置', ARRAY[
     'dashboard.read','servers.read','servers.manage',
     'dns.read','dns.manage','dhcp.read','dhcp.manage',
-    'refresh.manage','audit.read',
+    'refresh.manage','audit.read','export.manage','notifications.read','notifications.manage',
     'settings.base.read','settings.users.read','settings.auth.read','settings.notifications.read'
   ], TRUE),
   ('viewer', 'viewer', '只读查看仪表板、Agent、DNS/DHCP 资源和审计记录', ARRAY[
-    'dashboard.read','servers.read','dns.read','dhcp.read','audit.read',
+    'dashboard.read','servers.read','dns.read','dhcp.read','audit.read','notifications.read',
     'settings.base.read','settings.users.read','settings.auth.read','settings.notifications.read'
   ], TRUE)
 ON CONFLICT (key) DO UPDATE SET

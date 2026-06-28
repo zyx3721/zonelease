@@ -63,7 +63,8 @@ export function IPv4Input({ value, onChange, disabled, 'aria-label': ariaLabel }
     }
     if (event.key !== 'Backspace') return;
     const input = event.currentTarget;
-    if (input.value !== '' || input.selectionStart !== 0 || input.selectionEnd !== 0 || index === 0) return;
+    if (input.value !== '' || input.selectionStart !== 0 || input.selectionEnd !== 0 || index === 0)
+      return;
     event.preventDefault();
     focusPart(index - 1);
   }

@@ -85,6 +85,13 @@ func (r *Router) login(w http.ResponseWriter, req *http.Request) {
 
 func (r *Router) logout(w http.ResponseWriter, req *http.Request) {
 	token := bearerToken(req)
+	session, sessionErr := r.auth.Validate(req.Context(), token)
+	if sessionErr == nil {
+		_ = r.store.WriteAudit(req.Context(), session.User.ID, session.User.Username, "User logout", session.User.Username, "System", "success", auditMetadata(map[string]any{
+			"username": session.User.Username,
+			"provider": session.Provider,
+		}), repository.ClientIP(req))
+	}
 	if err := r.auth.Logout(req.Context(), token); err != nil {
 		r.logger.Error("Logout failed", "error", err)
 	}

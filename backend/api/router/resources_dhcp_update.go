@@ -48,6 +48,9 @@ func (r *Router) updateScope(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
 		return
 	}
+	if !r.ensureAgentNotSyncing(w, req, server) {
+		return
+	}
 	scopeExternalID := dhcpExternalID(current.ExternalID, current.Subnet, current.ID)
 	body.ID = scopeExternalID
 	body.ExternalID = scopeExternalID
@@ -72,7 +75,7 @@ func (r *Router) updateScope(w http.ResponseWriter, req *http.Request) {
 		writeJSON(w, http.StatusOK, current)
 		return
 	}
-	refreshTarget := dhcpScopeRefreshTarget(server.ID, scopeExternalID, body.Name)
+	refreshTarget := dhcpScopeRefreshTarget(server.ID, current.ID, scopeExternalID, body.Name)
 	finishRefresh := r.refresh.begin(refreshTarget)
 	defer finishRefresh()
 
@@ -96,14 +99,11 @@ func (r *Router) updateScope(w http.ResponseWriter, req *http.Request) {
 	if updated, err := r.store.UpdateScope(req.Context(), body); err == nil {
 		body = updated
 	}
-	r.writeAudit(req, "Updated DHCP scope", body.Name, "DHCP", "success", map[string]any{
-		"scope":      body.Name,
-		"scopeId":    body.ID,
+	r.writeAudit(req, "Updated DHCP scope", body.Name, "DHCP", "success", dhcpScopeAuditMetadata(server, body.ID, body.Name, map[string]any{
 		"subnet":     body.Subnet,
 		"rangeStart": body.StartRange,
 		"rangeEnd":   body.EndRange,
-		"server":     server.Name,
-	})
+	}))
 	r.refresh.markDirty(refreshTarget)
 	writeJSON(w, http.StatusOK, body)
 }
@@ -156,6 +156,9 @@ func (r *Router) updateReservation(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
 		return
 	}
+	if !r.ensureAgentNotSyncing(w, req, server) {
+		return
+	}
 	var body domain.DHCPReservation
 	if !decode(w, req, &body) {
 		return
@@ -165,7 +168,7 @@ func (r *Router) updateReservation(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	scopeExternalID := dhcpExternalID(scope.ExternalID, scope.Subnet, scope.ID)
-	refreshTarget := dhcpScopeRefreshTarget(server.ID, scopeExternalID, scope.Name)
+	refreshTarget := dhcpScopeRefreshTarget(server.ID, scope.ID, scopeExternalID, scope.Name)
 	finishRefresh := r.refresh.begin(refreshTarget)
 	defer finishRefresh()
 
@@ -199,14 +202,12 @@ func (r *Router) updateReservation(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	newReservation = updated
-	r.writeAudit(req, "Updated DHCP reservation", newReservation.IP, "DHCP", "success", map[string]any{
-		"scope":  scope.Name,
-		"oldIp":  current.IP,
-		"ip":     newReservation.IP,
-		"mac":    newReservation.MAC,
-		"name":   newReservation.Name,
-		"server": server.Name,
-	})
+	r.writeAudit(req, "Updated DHCP reservation", newReservation.IP, "DHCP", "success", dhcpScopeAuditMetadata(server, scope.ID, scope.Name, map[string]any{
+		"oldIp": current.IP,
+		"ip":    newReservation.IP,
+		"mac":   newReservation.MAC,
+		"name":  newReservation.Name,
+	}))
 	r.refresh.markDirty(refreshTarget)
 	writeJSON(w, http.StatusOK, newReservation)
 }

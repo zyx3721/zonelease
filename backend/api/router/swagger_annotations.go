@@ -32,9 +32,9 @@ func swaggerPublicAuthProviders() {}
 
 // swaggerLogout godoc
 // @Summary 注销当前会话
+// @Description 携带 Bearer Token 时删除对应会话；未携带或会话已失效时也会幂等返回成功。
 // @Tags Auth
 // @Produce json
-// @Security BearerAuth
 // @Success 200 {object} statusResponse
 // @Router /api/auth/logout [post]
 func swaggerLogout() {}
@@ -133,9 +133,12 @@ func swaggerEvents() {}
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param body body createRefreshRequest true "刷新参数"
+// @Param body body createRefreshRequest true "刷新参数，type 为空时默认为 runtime.refresh.all；仅允许 runtime.refresh.all、runtime.refresh.dns.all、runtime.refresh.dhcp.all"
 // @Success 202 {object} refreshTaskResponse
+// @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
 // @Router /api/refresh [post]
 func swaggerCreateRefresh() {}
 
@@ -147,6 +150,7 @@ func swaggerCreateRefresh() {}
 // @Param limit query string false "返回数量，默认 30；传 all 时返回全部"
 // @Success 200 {object} refreshTaskListResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Router /api/refresh/tasks [get]
 func swaggerRefreshTasks() {}
 
@@ -158,6 +162,7 @@ func swaggerRefreshTasks() {}
 // @Param limit query int false "返回数量，默认 20，最大 100"
 // @Success 200 {object} notificationListResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Router /api/notifications [get]
 func swaggerNotifications() {}
 
@@ -169,6 +174,7 @@ func swaggerNotifications() {}
 // @Security BearerAuth
 // @Success 200 {object} unreadNotificationCountResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Router /api/notifications/unread-count [get]
 func swaggerUnreadNotificationCount() {}
 
@@ -180,6 +186,7 @@ func swaggerUnreadNotificationCount() {}
 // @Param id path string true "通知 ID"
 // @Success 200 {object} statusResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
 // @Router /api/notifications/{id} [post]
 func swaggerReadNotification() {}
@@ -191,6 +198,7 @@ func swaggerReadNotification() {}
 // @Security BearerAuth
 // @Success 200 {object} statusResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Router /api/notifications/read-all [post]
 func swaggerReadAllNotifications() {}
 
@@ -201,6 +209,7 @@ func swaggerReadAllNotifications() {}
 // @Security BearerAuth
 // @Success 200 {object} statusResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Router /api/notifications/clear [post]
 func swaggerClearNotifications() {}
 
@@ -215,7 +224,9 @@ func swaggerClearNotifications() {}
 // @Success 201 {object} serverResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 409 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/servers [post]
 func swaggerCreateServer() {}
 
@@ -230,6 +241,7 @@ func swaggerCreateServer() {}
 // @Success 200 {object} serverHealthResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Router /api/servers/probe [post]
 func swaggerProbeServer() {}
 
@@ -241,7 +253,9 @@ func swaggerProbeServer() {}
 // @Param id path string true "服务器 ID"
 // @Success 200 {object} statusResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/servers/{id} [delete]
 func swaggerDeleteServer() {}
 
@@ -255,7 +269,9 @@ func swaggerDeleteServer() {}
 // @Param mode query string false "检查模式；传 auto 时按系统离线失败次数累计，默认手动检查失败立即 Offline"
 // @Success 200 {object} serverHealthResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/servers/{id}/ping [post]
 func swaggerPingServer() {}
 
@@ -268,7 +284,10 @@ func swaggerPingServer() {}
 // @Param id path string true "服务器 ID"
 // @Success 202 {object} refreshTaskResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/servers/{id}/sync [post]
 func swaggerSyncServer() {}
 
@@ -288,6 +307,8 @@ func swaggerPublicSystemBaseConfig() {}
 // @Security BearerAuth
 // @Success 200 {object} systemBaseConfigResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/base [get]
 func swaggerGetSystemBaseConfig() {}
 
@@ -301,6 +322,8 @@ func swaggerGetSystemBaseConfig() {}
 // @Success 200 {object} systemBaseConfigResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/base [put]
 func swaggerUpdateSystemBaseConfig() {}
 
@@ -311,6 +334,8 @@ func swaggerUpdateSystemBaseConfig() {}
 // @Security BearerAuth
 // @Success 200 {object} settingsUserListResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/users [get]
 func swaggerListSettingsUsers() {}
 
@@ -324,6 +349,9 @@ func swaggerListSettingsUsers() {}
 // @Success 201 {object} settingsUserResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/users [post]
 func swaggerCreateSettingsUser() {}
 
@@ -338,7 +366,10 @@ func swaggerCreateSettingsUser() {}
 // @Success 200 {object} settingsUserResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/users/{id} [put]
 func swaggerUpdateSettingsUser() {}
 
@@ -353,7 +384,9 @@ func swaggerUpdateSettingsUser() {}
 // @Success 200 {object} settingsUserResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/users/{id}/disabled [post]
 func swaggerDisableSettingsUser() {}
 
@@ -367,7 +400,9 @@ func swaggerDisableSettingsUser() {}
 // @Success 204
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/users/{id} [delete]
 func swaggerDeleteSettingsUser() {}
 
@@ -378,6 +413,8 @@ func swaggerDeleteSettingsUser() {}
 // @Security BearerAuth
 // @Success 200 {object} roleListResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/roles [get]
 func swaggerListRoles() {}
 
@@ -391,7 +428,9 @@ func swaggerListRoles() {}
 // @Success 201 {object} roleResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 409 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/roles [post]
 func swaggerCreateRole() {}
 
@@ -406,7 +445,9 @@ func swaggerCreateRole() {}
 // @Success 200 {object} roleResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/roles/{id} [put]
 func swaggerUpdateRole() {}
 
@@ -419,7 +460,9 @@ func swaggerUpdateRole() {}
 // @Param id path string true "角色 ID"
 // @Success 200 {object} statusResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/roles/{id} [delete]
 func swaggerDeleteRole() {}
 
@@ -430,6 +473,8 @@ func swaggerDeleteRole() {}
 // @Security BearerAuth
 // @Success 200 {object} userGroupListResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/user-groups [get]
 func swaggerListUserGroups() {}
 
@@ -443,7 +488,9 @@ func swaggerListUserGroups() {}
 // @Success 201 {object} userGroupResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 409 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/user-groups [post]
 func swaggerCreateUserGroup() {}
 
@@ -458,7 +505,9 @@ func swaggerCreateUserGroup() {}
 // @Success 200 {object} userGroupResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/user-groups/{id} [put]
 func swaggerUpdateUserGroup() {}
 
@@ -470,7 +519,9 @@ func swaggerUpdateUserGroup() {}
 // @Param id path string true "用户群组 ID"
 // @Success 200 {object} statusResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/user-groups/{id} [delete]
 func swaggerDeleteUserGroup() {}
 
@@ -481,6 +532,7 @@ func swaggerDeleteUserGroup() {}
 // @Security BearerAuth
 // @Success 200 {object} permissionListResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Router /api/settings/permissions [get]
 func swaggerListPermissions() {}
 
@@ -492,6 +544,8 @@ func swaggerListPermissions() {}
 // @Security BearerAuth
 // @Success 200 {object} authProviderListResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/auth-providers [get]
 func swaggerListAuthProviders() {}
 
@@ -507,7 +561,9 @@ func swaggerListAuthProviders() {}
 // @Success 200 {object} authProviderResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/auth-providers/{id} [put]
 func swaggerUpdateAuthProvider() {}
 
@@ -520,7 +576,9 @@ func swaggerUpdateAuthProvider() {}
 // @Param id path string true "认证配置 ID，当前为 ldap"
 // @Success 200 {object} authProviderTestResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Failure 503 {object} errorDocResponse
 // @Router /api/settings/auth-providers/{id}/test [post]
 func swaggerTestAuthProvider() {}
@@ -532,6 +590,8 @@ func swaggerTestAuthProvider() {}
 // @Security BearerAuth
 // @Success 200 {object} notificationChannelListResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/notifications [get]
 func swaggerListNotificationChannels() {}
 
@@ -547,6 +607,9 @@ func swaggerListNotificationChannels() {}
 // @Success 200 {object} notificationChannelResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 404 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Router /api/settings/notifications/{id} [put]
 func swaggerUpdateNotificationChannel() {}
 
@@ -562,7 +625,10 @@ func swaggerUpdateNotificationChannel() {}
 // @Success 200 {object} statusResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
-// @Failure 502 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 404 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
+// @Failure 503 {object} errorDocResponse
 // @Router /api/settings/notifications/{id}/test [post]
 func swaggerTestNotificationChannel() {}
 
@@ -578,6 +644,7 @@ func swaggerTestNotificationChannel() {}
 // @Success 200 {object} templatePreviewResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
 // @Router /api/settings/notifications/{id}/preview [post]
 func swaggerPreviewNotificationChannel() {}
@@ -592,6 +659,11 @@ func swaggerPreviewNotificationChannel() {}
 // @Param body body dnsZoneResponse true "DNS 区域参数"
 // @Success 201 {object} dnsZoneCreateResponseDoc
 // @Failure 400 {object} errorDocResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
+// @Failure 502 {object} errorDocResponse
 // @Router /api/dns/zones [post]
 func swaggerCreateZone() {}
 
@@ -603,18 +675,28 @@ func swaggerCreateZone() {}
 // @Param id path string true "DNS 区域标识"
 // @Success 200 {object} statusResponse
 // @Failure 400 {object} errorDocResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
+// @Failure 502 {object} errorDocResponse
 // @Router /api/dns/zones/{id} [delete]
 func swaggerDeleteZone() {}
 
 // swaggerRefreshZone godoc
 // @Summary 刷新指定 DNS 区域记录
+// @Description 目标 Agent 未同步且同目标刷新未运行时创建 runtime.refresh.dns.zone 局部刷新任务，只同步当前 DNS 区域记录快照。
 // @Tags DNS
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "DNS 区域标识"
 // @Success 202 {object} refreshTaskResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
+// @Failure 503 {object} errorDocResponse
 // @Router /api/dns/zones/{id}/refresh [post]
 func swaggerRefreshZone() {}
 
@@ -628,7 +710,12 @@ func swaggerRefreshZone() {}
 // @Param body body dnsRecordResponse true "DNS 记录参数"
 // @Success 201 {object} dnsRecordCreateResponse
 // @Failure 400 {object} errorDocResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 404 {object} errorDocResponse
 // @Failure 409 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
+// @Failure 502 {object} errorDocResponse
 // @Router /api/dns/records [post]
 func swaggerCreateRecord() {}
 
@@ -643,8 +730,12 @@ func swaggerCreateRecord() {}
 // @Param body body dnsRecordUpdateRequest true "DNS 记录值"
 // @Success 200 {object} dnsRecordCreateResponse
 // @Failure 400 {object} errorDocResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
 // @Failure 409 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
+// @Failure 502 {object} errorDocResponse
 // @Router /api/dns/records/{id} [put]
 func swaggerUpdateRecord() {}
 
@@ -657,7 +748,11 @@ func swaggerUpdateRecord() {}
 // @Param id path string true "DNS 记录标识"
 // @Success 200 {object} statusResponse
 // @Failure 400 {object} errorDocResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
+// @Failure 502 {object} errorDocResponse
 // @Router /api/dns/records/{id} [delete]
 func swaggerDeleteRecord() {}
 
@@ -671,13 +766,17 @@ func swaggerDeleteRecord() {}
 // @Param body body dhcpScopeResponse true "DHCP 作用域参数"
 // @Success 201 {object} dhcpScopeResponse
 // @Failure 400 {object} errorDocResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
 // @Failure 502 {object} errorDocResponse
 // @Router /api/dhcp/scopes [post]
 func swaggerCreateScope() {}
 
 // swaggerUpdateScope godoc
 // @Summary 更新 DHCP 作用域
-// @Description 转发到 DHCP Agent 更新 Windows DHCP 作用域名称、租期、状态和地址范围，成功后按当前作用域延迟合并创建 runtime.refresh.dhcp.scope 局部刷新任务。
+// @Description 转发到 DHCP Agent 更新 Windows DHCP 作用域名称、描述、默认网关、租期和地址范围，成功后按当前作用域延迟合并创建 runtime.refresh.dhcp.scope 局部刷新任务；作用域启停通过独立切换接口处理。
 // @Tags DHCP
 // @Accept json
 // @Produce json
@@ -686,7 +785,10 @@ func swaggerCreateScope() {}
 // @Param body body dhcpScopeResponse true "DHCP 作用域更新参数"
 // @Success 200 {object} dhcpScopeResponse
 // @Failure 400 {object} errorDocResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
 // @Failure 502 {object} errorDocResponse
 // @Router /api/dhcp/scopes/{id} [put]
 func swaggerUpdateScope() {}
@@ -699,21 +801,28 @@ func swaggerUpdateScope() {}
 // @Security BearerAuth
 // @Param id path string true "DHCP 作用域 ID"
 // @Success 200 {object} statusResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
 // @Failure 502 {object} errorDocResponse
 // @Router /api/dhcp/scopes/{id}/toggle [post]
 func swaggerToggleScope() {}
 
 // swaggerRefreshDHCPScope godoc
 // @Summary 刷新指定 DHCP 作用域
-// @Description 创建 runtime.refresh.dhcp.scope 局部刷新任务，只同步当前 DHCP 作用域的基础信息、排除范围、租约和保留地址快照。
+// @Description 目标 Agent 未同步且同目标刷新未运行时创建 runtime.refresh.dhcp.scope 局部刷新任务，只同步当前 DHCP 作用域的基础信息、排除范围、租约和保留地址快照。
 // @Tags DHCP
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "DHCP 作用域 ID"
 // @Success 202 {object} refreshTaskResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
-// @Failure 502 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
+// @Failure 503 {object} errorDocResponse
 // @Router /api/dhcp/scopes/{id}/refresh [post]
 func swaggerRefreshDHCPScope() {}
 
@@ -725,7 +834,10 @@ func swaggerRefreshDHCPScope() {}
 // @Security BearerAuth
 // @Param id path string true "DHCP 作用域 ID"
 // @Success 200 {object} statusResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
 // @Failure 502 {object} errorDocResponse
 // @Router /api/dhcp/scopes/{id} [delete]
 func swaggerDeleteScope() {}
@@ -740,7 +852,10 @@ func swaggerDeleteScope() {}
 // @Param body body dhcpExclusionResponse true "DHCP 排除范围参数"
 // @Success 201 {object} dhcpExclusionResponse
 // @Failure 400 {object} errorDocResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
 // @Failure 502 {object} errorDocResponse
 // @Router /api/dhcp/exclusions [post]
 func swaggerCreateExclusion() {}
@@ -753,7 +868,10 @@ func swaggerCreateExclusion() {}
 // @Security BearerAuth
 // @Param id path string true "DHCP 排除范围 ID"
 // @Success 200 {object} statusResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
 // @Failure 502 {object} errorDocResponse
 // @Router /api/dhcp/exclusions/{id} [delete]
 func swaggerDeleteExclusion() {}
@@ -766,7 +884,10 @@ func swaggerDeleteExclusion() {}
 // @Security BearerAuth
 // @Param id path string true "DHCP 租约 ID"
 // @Success 200 {object} statusResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
 // @Failure 502 {object} errorDocResponse
 // @Router /api/dhcp/leases/{id} [delete]
 func swaggerDeleteLease() {}
@@ -781,6 +902,11 @@ func swaggerDeleteLease() {}
 // @Param body body dhcpReservationResponse true "DHCP 保留地址参数"
 // @Success 201 {object} dhcpReservationResponse
 // @Failure 400 {object} errorDocResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
+// @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Failure 502 {object} errorDocResponse
 // @Router /api/dhcp/reservations [post]
 func swaggerCreateReservation() {}
@@ -796,7 +922,11 @@ func swaggerCreateReservation() {}
 // @Param body body dhcpReservationResponse true "DHCP 保留地址更新参数"
 // @Success 200 {object} dhcpReservationResponse
 // @Failure 400 {object} errorDocResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Failure 502 {object} errorDocResponse
 // @Router /api/dhcp/reservations/{id} [put]
 func swaggerUpdateReservation() {}
@@ -809,7 +939,10 @@ func swaggerUpdateReservation() {}
 // @Security BearerAuth
 // @Param id path string true "DHCP 保留地址 ID"
 // @Success 200 {object} statusResponse
+// @Failure 401 {object} errorDocResponse
+// @Failure 403 {object} errorDocResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 409 {object} errorDocResponse
 // @Failure 502 {object} errorDocResponse
 // @Router /api/dhcp/reservations/{id} [delete]
 func swaggerDeleteReservation() {}

@@ -127,7 +127,9 @@ export function AddScopeDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>新建 DHCP 作用域</DialogTitle>
-          <DialogDescription className="sr-only">填写 DHCP 作用域名称、子网、地址范围和租期</DialogDescription>
+          <DialogDescription className="sr-only">
+            填写 DHCP 作用域名称、子网、地址范围和租期
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div>

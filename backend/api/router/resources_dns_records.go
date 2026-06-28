@@ -52,6 +52,9 @@ func (r *Router) createDNSRecord(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
 		return
 	}
+	if !r.ensureAgentNotSyncing(w, req, server) {
+		return
+	}
 	primaryRefresh := dnsZoneRefreshTarget(serverID, body.ZoneID, zoneName)
 	finishPrimary := r.refresh.begin(primaryRefresh)
 	defer finishPrimary()
@@ -89,13 +92,12 @@ func (r *Router) createDNSRecord(w http.ResponseWriter, req *http.Request) {
 			relatedRecords = append(relatedRecords, ptrRecord)
 		}
 	}
-	r.writeAudit(req, "Created DNS record", body.Name, "DNS", "success", map[string]any{
-		"zone":   zoneName,
+	r.writeAudit(req, "Created DNS record", body.Name, "DNS", "success", dnsAuditMetadata(server, body.ZoneID, zoneName, map[string]any{
 		"record": body.Name,
 		"type":   body.Type,
 		"value":  body.Value,
 		"ttl":    body.TTL,
-	})
+	}))
 	r.refresh.markDirty(primaryRefresh)
 	for _, related := range relatedRecords {
 		if _, relatedZoneName, ok := repository.DecodeDNSZoneID(related.ZoneID); ok {
@@ -129,6 +131,9 @@ func (r *Router) deleteDNSRecord(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
 		return
 	}
+	if !r.ensureAgentNotSyncing(w, req, server) {
+		return
+	}
 	primaryRefresh := dnsZoneRefreshTarget(serverID, repository.DNSZoneID(serverID, zoneName), zoneName)
 	finishPrimary := r.refresh.begin(primaryRefresh)
 	defer finishPrimary()
@@ -156,12 +161,11 @@ func (r *Router) deleteDNSRecord(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadGateway, "agent_delete_record_failed", "Agent 删除 DNS 记录失败："+err.Error())
 		return
 	}
-	r.writeAudit(req, "Deleted DNS record", recordName, "DNS", "success", map[string]any{
-		"zone":   zoneName,
+	r.writeAudit(req, "Deleted DNS record", recordName, "DNS", "success", dnsAuditMetadata(server, repository.DNSZoneID(serverID, zoneName), zoneName, map[string]any{
 		"record": recordName,
 		"type":   recordType,
 		"value":  recordValue,
-	})
+	}))
 	_ = r.store.DeleteDNSRecord(req.Context(), id)
 	if strings.EqualFold(recordType, "A") {
 		ptrRecord := relatedPTR
@@ -218,6 +222,9 @@ func (r *Router) updateDNSRecord(w http.ResponseWriter, req *http.Request) {
 	server, err := r.store.GetServer(req.Context(), serverID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
+		return
+	}
+	if !r.ensureAgentNotSyncing(w, req, server) {
 		return
 	}
 	primaryRefresh := dnsZoneRefreshTarget(serverID, repository.DNSZoneID(serverID, zoneName), zoneName)
@@ -324,13 +331,12 @@ func (r *Router) updateDNSRecord(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 	}
-	r.writeAudit(req, "Updated DNS record", recordName, "DNS", "success", map[string]any{
-		"zone":     zoneName,
+	r.writeAudit(req, "Updated DNS record", recordName, "DNS", "success", dnsAuditMetadata(server, repository.DNSZoneID(serverID, zoneName), zoneName, map[string]any{
 		"record":   recordName,
 		"type":     recordType,
 		"oldValue": oldRecord.Value,
 		"newValue": newValue,
-	})
+	}))
 	r.refresh.markDirty(primaryRefresh)
 	for zoneID, relatedZoneName := range reverseRefreshZones {
 		r.refresh.markDirty(dnsZoneRefreshTarget(serverID, zoneID, relatedZoneName))

@@ -30,8 +30,11 @@ func (r *Router) createExclusion(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
 		return
 	}
+	if !r.ensureAgentNotSyncing(w, req, server) {
+		return
+	}
 	scopeExternalID := dhcpExternalID(scope.ExternalID, scope.Subnet, scope.ID)
-	refreshTarget := dhcpScopeRefreshTarget(server.ID, scopeExternalID, scope.Name)
+	refreshTarget := dhcpScopeRefreshTarget(server.ID, scope.ID, scopeExternalID, scope.Name)
 	finishRefresh := r.refresh.begin(refreshTarget)
 	defer finishRefresh()
 	body.ScopeID = scopeExternalID
@@ -52,12 +55,10 @@ func (r *Router) createExclusion(w http.ResponseWriter, req *http.Request) {
 	if item, err := r.store.CreateExclusion(req.Context(), body); err == nil {
 		body = item
 	}
-	r.writeAudit(req, "Created DHCP exclusion", body.StartIP+"-"+body.EndIP, "DHCP", "success", map[string]any{
-		"scope":   scope.Name,
+	r.writeAudit(req, "Created DHCP exclusion", body.StartIP+"-"+body.EndIP, "DHCP", "success", dhcpScopeAuditMetadata(server, scope.ID, scope.Name, map[string]any{
 		"startIp": body.StartIP,
 		"endIp":   body.EndIP,
-		"server":  server.Name,
-	})
+	}))
 	r.refresh.markDirty(refreshTarget)
 	writeJSON(w, http.StatusCreated, body)
 }
@@ -86,8 +87,11 @@ func (r *Router) deleteExclusion(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
 		return
 	}
+	if !r.ensureAgentNotSyncing(w, req, server) {
+		return
+	}
 	scopeExternalID := dhcpExternalID(scope.ExternalID, scope.Subnet, scope.ID)
-	refreshTarget := dhcpScopeRefreshTarget(server.ID, scopeExternalID, scope.Name)
+	refreshTarget := dhcpScopeRefreshTarget(server.ID, scope.ID, scopeExternalID, scope.Name)
 	finishRefresh := r.refresh.begin(refreshTarget)
 	defer finishRefresh()
 	var ignored map[string]any
@@ -100,12 +104,10 @@ func (r *Router) deleteExclusion(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	_ = r.store.DeleteExclusion(req.Context(), id)
-	r.writeAudit(req, "Deleted DHCP exclusion", exclusion.StartIP+"-"+exclusion.EndIP, "DHCP", "success", map[string]any{
-		"scope":   scope.Name,
+	r.writeAudit(req, "Deleted DHCP exclusion", exclusion.StartIP+"-"+exclusion.EndIP, "DHCP", "success", dhcpScopeAuditMetadata(server, scope.ID, scope.Name, map[string]any{
 		"startIp": exclusion.StartIP,
 		"endIp":   exclusion.EndIP,
-		"server":  server.Name,
-	})
+	}))
 	r.refresh.markDirty(refreshTarget)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

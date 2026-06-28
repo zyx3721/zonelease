@@ -154,12 +154,12 @@ func (s *passwordResetStore) UpdateUserPassword(context.Context, string, string)
 	return nil
 }
 
-func (s *passwordResetStore) CreateSession(context.Context, string, string, time.Time) error {
+func (s *passwordResetStore) CreateSession(context.Context, string, string, string, time.Time) error {
 	return nil
 }
 
-func (s *passwordResetStore) FindSession(context.Context, string) (domain.User, time.Time, time.Time, error) {
-	return domain.User{}, time.Time{}, time.Time{}, repository.ErrNotFound
+func (s *passwordResetStore) FindSession(context.Context, string) (domain.User, string, time.Time, time.Time, error) {
+	return domain.User{}, "", time.Time{}, time.Time{}, repository.ErrNotFound
 }
 
 func (s *passwordResetStore) TouchSession(context.Context, string) error {

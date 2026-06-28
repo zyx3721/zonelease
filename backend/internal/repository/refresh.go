@@ -82,3 +82,14 @@ func (s *Store) UpdateRefreshTask(ctx context.Context, id, status string, payloa
 	}
 	return nil
 }
+
+func (s *Store) DeleteRefreshTask(ctx context.Context, id string) error {
+	cmd, err := s.pool.Exec(ctx, `DELETE FROM refresh_tasks WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

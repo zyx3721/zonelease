@@ -12,6 +12,9 @@ type unreadNotificationCountResponse struct {
 }
 
 func (r *Router) notifications(w http.ResponseWriter, req *http.Request) {
+	if !r.ensurePermission(w, req, "notifications.read") {
+		return
+	}
 	limit, _ := strconv.Atoi(req.URL.Query().Get("limit"))
 	items, total, err := r.store.ListNotifications(req.Context(), limit)
 	if err != nil {
@@ -23,6 +26,9 @@ func (r *Router) notifications(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) unreadNotificationCount(w http.ResponseWriter, req *http.Request) {
+	if !r.ensurePermission(w, req, "notifications.read") {
+		return
+	}
 	if count, ok, err := r.realtime.GetInt(req.Context(), unreadNotificationCountCacheKey); err == nil && ok {
 		writeJSON(w, http.StatusOK, unreadNotificationCountResponse{Count: count})
 		return
@@ -40,6 +46,9 @@ func (r *Router) unreadNotificationCount(w http.ResponseWriter, req *http.Reques
 }
 
 func (r *Router) markAllNotificationsRead(w http.ResponseWriter, req *http.Request) {
+	if !r.ensurePermission(w, req, "notifications.manage") {
+		return
+	}
 	if err := r.store.MarkAllNotificationsRead(req.Context()); err != nil {
 		r.logger.Error("Mark all notifications read failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "mark_notifications_read_failed", "标记通知已读失败")
@@ -51,6 +60,9 @@ func (r *Router) markAllNotificationsRead(w http.ResponseWriter, req *http.Reque
 }
 
 func (r *Router) clearNotifications(w http.ResponseWriter, req *http.Request) {
+	if !r.ensurePermission(w, req, "notifications.manage") {
+		return
+	}
 	if err := r.store.DismissNotifications(req.Context()); err != nil {
 		r.logger.Error("Clear notifications failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "clear_notifications_failed", "清空通知失败")
@@ -62,6 +74,9 @@ func (r *Router) clearNotifications(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) markNotificationRead(w http.ResponseWriter, req *http.Request) {
+	if !r.ensurePermission(w, req, "notifications.manage") {
+		return
+	}
 	id := pathID(req.URL.Path, "/api/notifications/")
 	if id == "" {
 		writeError(w, http.StatusNotFound, "notification_not_found", "通知消息不存在")

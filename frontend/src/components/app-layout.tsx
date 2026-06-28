@@ -130,6 +130,7 @@ interface RuntimeRefreshEvent {
     startedAgents?: number;
     syncedAgents?: number;
     failedAgents?: number;
+    skippedAgents?: number;
     currentAgent?: string;
     agentEvent?: RefreshAgentEvent;
   };
@@ -138,8 +139,9 @@ interface RuntimeRefreshEvent {
 interface RefreshAgentEvent {
   id?: string;
   name?: string;
-  status?: 'running' | 'completed' | 'failed' | string;
+  status?: 'running' | 'completed' | 'failed' | 'skipped' | string;
   error?: string;
+  warn?: string;
 }
 
 interface ServiceHealth {
@@ -176,10 +178,13 @@ function formatRefreshToast(event: RuntimeRefreshEvent): string {
 
 function formatRefreshDoneToast(event: RuntimeRefreshEvent): string {
   const total = event.payload?.totalAgents ?? 0;
+  if (event.status === 'failed' && total <= 0) return event.message?.trim() || '刷新任务失败';
   const synced = event.payload?.syncedAgents ?? total;
   const failed = event.payload?.failedAgents ?? 0;
-  const done = total > 0 ? Math.min(total, synced + failed) : synced;
+  const skipped = event.payload?.skippedAgents ?? 0;
+  const done = total > 0 ? Math.min(total, synced + failed + skipped) : synced;
   if (failed > 0 && total > 0) return `[${done}/${total}] 全量同步完成，异常 ${failed}`;
+  if (skipped > 0 && total > 0) return `[${done}/${total}] 全量同步完成，跳过 ${skipped}`;
   return total > 0 ? `[${done}/${total}] 所有 Agent 已同步完成` : '所有 Agent 已同步完成';
 }
 
@@ -190,6 +195,8 @@ function refreshAgentKey(agent: RefreshAgentEvent) {
 function formatAgentRefreshToast(agent: RefreshAgentEvent) {
   const name = agent.name?.trim() || 'Agent';
   if (agent.status === 'completed') return `${name} 同步完成`;
+  if (agent.status === 'skipped')
+    return agent.warn?.trim() ? agent.warn.trim() : `${name} 已处于正在同步中，跳过同步`;
   if (agent.status === 'failed')
     return agent.error?.trim() ? `${name} 同步失败\n${agent.error}` : `${name} 同步失败`;
   return `${name} 正在同步`;
@@ -318,6 +325,8 @@ export function AppLayout({ children }: { children?: ReactNode }) {
     () => items.filter(item => userHasAnyPermission(user, item.permissions)),
     [user]
   );
+  const canReadNotifications = userHasAnyPermission(user, ['notifications.read']);
+  const canManageNotifications = userHasAnyPermission(user, ['notifications.manage']);
   const current = visibleItems.find(item => matchesNavPath(item.to, path)) ?? visibleItems[0];
   const hideRouteHeading = path === '/audit' || path === '/dns' || path === '/dhcp';
   const routeDescription =
@@ -357,7 +366,7 @@ export function AppLayout({ children }: { children?: ReactNode }) {
 
   useEffect(() => {
     const source = new EventSource(runtimeEventsUrl());
-    source.addEventListener('runtime.refresh.all', event => {
+    const handleFullRefreshEvent = (event: MessageEvent) => {
       const refreshEvent = parseRuntimeRefreshEvent(event);
       if (['queued', 'running', 'progress'].includes(refreshEvent.status ?? '')) {
         if (manualRefreshTaskRef.current === refreshEvent.taskId) {
@@ -365,18 +374,19 @@ export function AppLayout({ children }: { children?: ReactNode }) {
           const agentKey = agentEvent ? refreshAgentKey(agentEvent) : '';
           if (refreshEvent.status === 'progress' && agentEvent && agentKey) {
             const toastId = manualRefreshAgentToastsRef.current.get(agentKey);
+            const agentFinished = ['completed', 'failed', 'skipped'].includes(agentEvent.status ?? '');
             const nextOptions =
-              agentEvent.status === 'completed' || agentEvent.status === 'failed'
-                ? taskToastDoneOptionsFor(toastId)
-                : taskToastOptionsFor(toastId);
+              agentFinished ? taskToastDoneOptionsFor(toastId) : taskToastOptionsFor(toastId);
             const nextToastId =
               agentEvent.status === 'failed'
                 ? toast.error(formatAgentRefreshToast(agentEvent), nextOptions)
                 : agentEvent.status === 'completed'
                   ? toast.success(formatAgentRefreshToast(agentEvent), nextOptions)
-                  : toast.loading(formatAgentRefreshToast(agentEvent), nextOptions);
+                  : agentEvent.status === 'skipped'
+                    ? toast.warning(formatAgentRefreshToast(agentEvent), nextOptions)
+                    : toast.loading(formatAgentRefreshToast(agentEvent), nextOptions);
             manualRefreshAgentToastsRef.current.set(agentKey, nextToastId);
-            if (agentEvent.status === 'completed' || agentEvent.status === 'failed') {
+            if (agentFinished) {
               window.setTimeout(() => {
                 manualRefreshAgentToastsRef.current.delete(agentKey);
               }, 3000);
@@ -411,7 +421,10 @@ export function AppLayout({ children }: { children?: ReactNode }) {
         emitZoneLeaseRefresh();
         void loadNotifications().catch(() => undefined);
       }
-    });
+    };
+    source.addEventListener('runtime.refresh.all', handleFullRefreshEvent);
+    source.addEventListener('runtime.refresh.dns.all', handleFullRefreshEvent);
+    source.addEventListener('runtime.refresh.dhcp.all', handleFullRefreshEvent);
     source.addEventListener('runtime.refresh.dns.zone', () => {
       emitZoneLeaseRefresh();
     });
@@ -492,7 +505,11 @@ export function AppLayout({ children }: { children?: ReactNode }) {
   }, [notificationOpen]);
 
   async function loadNotifications() {
-    if (!getAuthToken()) return;
+    if (!getAuthToken() || !canReadNotifications) {
+      setNotifications([]);
+      setUnreadCount(0);
+      return;
+    }
     const [items, count] = await Promise.all([
       fetchNotifications(20),
       fetchUnreadNotificationCount(),
@@ -598,7 +615,7 @@ export function AppLayout({ children }: { children?: ReactNode }) {
   }
 
   async function handleNotificationOpen(item: NotificationItem) {
-    if (!item.readAt) {
+    if (canManageNotifications && !item.readAt) {
       await markNotificationRead(item.id).catch(() => undefined);
       await loadNotifications().catch(() => undefined);
     }
@@ -849,52 +866,57 @@ export function AppLayout({ children }: { children?: ReactNode }) {
                 </button>
               </AppTooltip>
             ) : null}
-            <div ref={notificationRef} className="relative">
-              <AppTooltip label="通知消息" placement="bottom">
-                <button
-                  type="button"
-                  onClick={handleNotificationToggle}
-                  className="zl-action-button relative flex h-[42px] w-[42px] items-center justify-center rounded-lg border"
-                  style={{
-                    background: 'var(--zl-control-bg)',
-                    borderColor: notificationOpen ? 'rgba(59,130,246,0.48)' : 'var(--zl-border)',
-                    color: 'var(--zl-text-muted)',
-                  }}
-                  aria-label="通知消息"
-                  aria-haspopup="dialog"
-                  aria-expanded={notificationOpen}
-                >
-                  <Bell size={17} />
-                  {unreadCount > 0 ? (
-                    <span
-                      className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] font-semibold"
-                      style={{
-                        background: '#ef4444',
-                        color: '#fff',
-                        border: '2px solid var(--zl-header)',
-                      }}
-                    >
-                      {unreadCount > 99 ? '99+' : unreadCount}
-                    </span>
-                  ) : null}
-                </button>
-              </AppTooltip>
-              {notificationOpen && typeof document !== 'undefined'
-                ? createPortal(
-                    <NotificationPanel
-                      ref={notificationPanelRef}
-                      items={notifications}
-                      unreadCount={unreadCount}
-                      position={notificationPanelPosition}
-                      onReadAll={() => void handleReadAllNotifications()}
-                      onClear={() => void handleClearNotifications()}
-                      onOpen={item => void handleNotificationOpen(item)}
-                      onClose={() => setNotificationOpen(false)}
-                    />,
-                    document.body
-                  )
-                : null}
-            </div>
+            {canReadNotifications ? (
+              <div ref={notificationRef} className="relative">
+                <AppTooltip label="通知消息" placement="bottom">
+                  <button
+                    type="button"
+                    onClick={handleNotificationToggle}
+                    className="zl-action-button relative flex h-[42px] w-[42px] items-center justify-center rounded-lg border"
+                    style={{
+                      background: 'var(--zl-control-bg)',
+                      borderColor: notificationOpen
+                        ? 'rgba(59,130,246,0.48)'
+                        : 'var(--zl-border)',
+                      color: 'var(--zl-text-muted)',
+                    }}
+                    aria-label="通知消息"
+                    aria-haspopup="dialog"
+                    aria-expanded={notificationOpen}
+                  >
+                    <Bell size={17} />
+                    {unreadCount > 0 ? (
+                      <span
+                        className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] font-semibold"
+                        style={{
+                          background: '#ef4444',
+                          color: '#fff',
+                          border: '2px solid var(--zl-header)',
+                        }}
+                      >
+                        {unreadCount > 99 ? '99+' : unreadCount}
+                      </span>
+                    ) : null}
+                  </button>
+                </AppTooltip>
+                {notificationOpen && typeof document !== 'undefined'
+                  ? createPortal(
+                      <NotificationPanel
+                        ref={notificationPanelRef}
+                        items={notifications}
+                        unreadCount={unreadCount}
+                        canManage={canManageNotifications}
+                        position={notificationPanelPosition}
+                        onReadAll={() => void handleReadAllNotifications()}
+                        onClear={() => void handleClearNotifications()}
+                        onOpen={item => void handleNotificationOpen(item)}
+                        onClose={() => setNotificationOpen(false)}
+                      />,
+                      document.body
+                    )
+                  : null}
+              </div>
+            ) : null}
             <AppTooltip
               label={theme === 'dark' ? '切换浅色背景' : '切换深色背景'}
               placement="bottom"

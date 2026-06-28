@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -13,6 +14,11 @@ import (
 	"zonelease/backend/internal/repository"
 	"zonelease/backend/internal/service/realtime"
 	syncsvc "zonelease/backend/internal/service/sync"
+)
+
+var (
+	errRefreshTargetRunning   = errors.New("refresh target is running")
+	errRuntimeLockUnavailable = errors.New("runtime lock unavailable")
 )
 
 type dnsZoneCreateResponse struct {
@@ -35,7 +41,12 @@ func (r *Router) createZone(w http.ResponseWriter, req *http.Request) {
 	}
 	body.Name = normalizeDNSZoneName(body.Name, body.Reverse)
 	response := dnsZoneCreateResponse{}
+	createdServer := domain.Server{ID: body.ServerID}
 	if srv, err := r.store.GetServer(req.Context(), body.ServerID); err == nil {
+		createdServer = srv
+		if !r.ensureAgentNotSyncing(w, req, srv) {
+			return
+		}
 		var ignored map[string]any
 		agentCtx, cancel := context.WithTimeout(req.Context(), r.agentOperationTimeout(req.Context()))
 		defer cancel()
@@ -68,7 +79,7 @@ func (r *Router) createZone(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
 		return
 	}
-	r.writeAudit(req, "Created zone", body.Name, "DNS", "success", map[string]any{"zone": body.Name, "serverId": body.ServerID})
+	r.writeAudit(req, "Created zone", body.Name, "DNS", "success", dnsAuditMetadata(createdServer, body.ID, body.Name, nil))
 	response.DNSZone = body
 	writeJSON(w, http.StatusCreated, response)
 }
@@ -87,12 +98,28 @@ func (r *Router) zoneAction(w http.ResponseWriter, req *http.Request) {
 		writeError(w, statusFromErr(err), "zone_not_found", "DNS 区域不存在")
 		return
 	}
+	server, err := r.store.GetServer(req.Context(), zone.ServerID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
+		return
+	}
+	if !r.ensureAgentNotSyncing(w, req, server) {
+		return
+	}
 	task, err := r.enqueueZoneRefresh(zone.ServerID, zone.ID, zone.Name, currentUser(req).ID)
 	if err != nil {
+		if errors.Is(err, errRefreshTargetRunning) {
+			writeError(w, http.StatusConflict, "refresh_target_running", "当前刷新目标正在执行，请稍后再试")
+			return
+		}
+		if errors.Is(err, errRuntimeLockUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "runtime_lock_unavailable", "运行态锁服务异常，请稍后再试")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "refresh_zone_failed", "创建区域刷新任务失败")
 		return
 	}
-	r.writeAudit(req, "Queued DNS zone refresh", zone.Name, "DNS", "success", map[string]any{"zone": zone.Name, "zoneId": zone.ID, "serverId": zone.ServerID})
+	r.writeAudit(req, "Queued DNS zone refresh", zone.Name, "DNS", "success", dnsAuditMetadata(server, zone.ID, zone.Name, nil))
 	writeJSON(w, http.StatusAccepted, task)
 }
 
@@ -115,6 +142,9 @@ func (r *Router) deleteZone(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
 		return
 	}
+	if !r.ensureAgentNotSyncing(w, req, server) {
+		return
+	}
 	var ignored map[string]any
 	agentCtx, cancel := context.WithTimeout(req.Context(), r.agentOperationTimeout(req.Context()))
 	defer cancel()
@@ -122,7 +152,7 @@ func (r *Router) deleteZone(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadGateway, "agent_delete_zone_failed", "Agent 删除 DNS 区域失败："+err.Error())
 		return
 	}
-	r.writeAudit(req, "Deleted zone", zoneName, "DNS", "success", map[string]any{"zone": zoneName, "serverId": serverID})
+	r.writeAudit(req, "Deleted zone", zoneName, "DNS", "success", dnsAuditMetadata(server, id, zoneName, nil))
 	_ = r.store.DeleteDNSZone(req.Context(), id)
 	_ = r.realtime.PublishRefresh(req.Context(), realtime.RefreshEvent{Type: "runtime.updated", Status: "success", Message: "运行态已更新"})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -157,6 +187,9 @@ func (r *Router) createScope(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
 		return
 	}
+	if !r.ensureAgentNotSyncing(w, req, server) {
+		return
+	}
 	body.ExternalID = dhcpExternalID(body.ExternalID, body.ID, body.Subnet)
 	body.ID = body.ExternalID
 	body.ServerID = server.ID
@@ -165,7 +198,7 @@ func (r *Router) createScope(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	normalizeDHCPScopeLeaseDuration(&body)
-	refreshTarget := dhcpScopeRefreshTarget(server.ID, body.ExternalID, body.Name)
+	refreshTarget := dhcpScopeRefreshTarget(server.ID, "", body.ExternalID, body.Name)
 	finishRefresh := r.refresh.begin(refreshTarget)
 	defer finishRefresh()
 	var ignored map[string]any
@@ -178,13 +211,12 @@ func (r *Router) createScope(w http.ResponseWriter, req *http.Request) {
 	if item, err := r.store.CreateScope(req.Context(), body); err == nil {
 		body.ID = item.ID
 	}
-	r.writeAudit(req, "Created DHCP scope", body.Name, "DHCP", "success", map[string]any{
-		"scope":      body.Name,
+	refreshTarget.ScopeID = body.ID
+	r.writeAudit(req, "Created DHCP scope", body.Name, "DHCP", "success", dhcpScopeAuditMetadata(server, body.ID, body.Name, map[string]any{
 		"subnet":     body.Subnet,
 		"rangeStart": body.StartRange,
 		"rangeEnd":   body.EndRange,
-		"server":     server.Name,
-	})
+	}))
 	r.refresh.markDirty(refreshTarget)
 	writeJSON(w, http.StatusCreated, body)
 }
@@ -210,20 +242,30 @@ func (r *Router) scopeAction(w http.ResponseWriter, req *http.Request) {
 	}
 	scopeExternalID := dhcpExternalID(scope.ExternalID, scope.Subnet, scope.ID)
 	if action == "refresh" {
-		task, err := r.enqueueDHCPScopeRefresh(server.ID, scopeExternalID, scope.Name, currentUser(req).ID)
+		if !r.ensureAgentNotSyncing(w, req, server) {
+			return
+		}
+		task, err := r.enqueueDHCPScopeRefresh(server.ID, scope.ID, scopeExternalID, scope.Name, currentUser(req).ID)
 		if err != nil {
+			if errors.Is(err, errRefreshTargetRunning) {
+				writeError(w, http.StatusConflict, "refresh_target_running", "当前刷新目标正在执行，请稍后再试")
+				return
+			}
+			if errors.Is(err, errRuntimeLockUnavailable) {
+				writeError(w, http.StatusServiceUnavailable, "runtime_lock_unavailable", "运行态锁服务异常，请稍后再试")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "refresh_scope_failed", "创建 DHCP 作用域刷新任务失败")
 			return
 		}
-		r.writeAudit(req, "Queued DHCP scope refresh", scope.Name, "DHCP", "success", map[string]any{
-			"scope":   scope.Name,
-			"scopeId": scope.ID,
-			"server":  server.Name,
-		})
+		r.writeAudit(req, "Queued DHCP scope refresh", scope.Name, "DHCP", "success", dhcpScopeAuditMetadata(server, scope.ID, scope.Name, nil))
 		writeJSON(w, http.StatusAccepted, task)
 		return
 	}
-	refreshTarget := dhcpScopeRefreshTarget(server.ID, scopeExternalID, scope.Name)
+	if !r.ensureAgentNotSyncing(w, req, server) {
+		return
+	}
+	refreshTarget := dhcpScopeRefreshTarget(server.ID, scope.ID, scopeExternalID, scope.Name)
 	finishRefresh := r.refresh.begin(refreshTarget)
 	defer finishRefresh()
 	agentAction := "deactivate"
@@ -239,12 +281,9 @@ func (r *Router) scopeAction(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	_ = r.store.ToggleScope(req.Context(), id)
-	r.writeAudit(req, "Toggled DHCP scope", scope.Name, "DHCP", "success", map[string]any{
-		"scope":   scope.Name,
-		"scopeId": scope.ID,
-		"action":  agentAction,
-		"server":  server.Name,
-	})
+	r.writeAudit(req, "Toggled DHCP scope", scope.Name, "DHCP", "success", dhcpScopeAuditMetadata(server, scope.ID, scope.Name, map[string]any{
+		"action": agentAction,
+	}))
 	r.refresh.markDirty(refreshTarget)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -268,8 +307,11 @@ func (r *Router) deleteScope(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
 		return
 	}
+	if !r.ensureAgentNotSyncing(w, req, server) {
+		return
+	}
 	scopeExternalID := dhcpExternalID(scope.ExternalID, scope.Subnet, scope.ID)
-	refreshTarget := dhcpScopeRefreshTarget(server.ID, scopeExternalID, scope.Name)
+	refreshTarget := dhcpScopeRefreshTarget(server.ID, scope.ID, scopeExternalID, scope.Name)
 	finishRefresh := r.refresh.begin(refreshTarget)
 	defer finishRefresh()
 	var ignored map[string]any
@@ -284,7 +326,7 @@ func (r *Router) deleteScope(w http.ResponseWriter, req *http.Request) {
 		writeError(w, statusFromErr(err), "delete_scope_failed", "删除 DHCP 作用域快照失败")
 		return
 	}
-	r.writeAudit(req, "Deleted DHCP scope", scope.Name, "DHCP", "success", map[string]any{"scope": scope.Name, "subnet": scope.Subnet, "server": server.Name})
+	r.writeAudit(req, "Deleted DHCP scope", scope.Name, "DHCP", "success", dhcpScopeAuditMetadata(server, scope.ID, scope.Name, map[string]any{"subnet": scope.Subnet}))
 	_ = r.realtime.PublishRefresh(req.Context(), realtime.RefreshEvent{Type: "runtime.updated", Status: "success", Message: "运行态已更新"})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -313,8 +355,11 @@ func (r *Router) deleteLease(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
 		return
 	}
+	if !r.ensureAgentNotSyncing(w, req, server) {
+		return
+	}
 	scopeExternalID := dhcpExternalID(scope.ExternalID, scope.Subnet, scope.ID)
-	refreshTarget := dhcpScopeRefreshTarget(server.ID, scopeExternalID, scope.Name)
+	refreshTarget := dhcpScopeRefreshTarget(server.ID, scope.ID, scopeExternalID, scope.Name)
 	finishRefresh := r.refresh.begin(refreshTarget)
 	defer finishRefresh()
 	var ignored map[string]any
@@ -336,13 +381,11 @@ func (r *Router) deleteLease(w http.ResponseWriter, req *http.Request) {
 	}
 leaseReleased:
 	_ = r.store.DeleteLease(req.Context(), id)
-	r.writeAudit(req, "Released DHCP lease", lease.IP, "DHCP", "success", map[string]any{
-		"scope":    scope.Name,
+	r.writeAudit(req, "Released DHCP lease", lease.IP, "DHCP", "success", dhcpScopeAuditMetadata(server, scope.ID, scope.Name, map[string]any{
 		"ip":       lease.IP,
 		"mac":      lease.MAC,
 		"hostname": lease.Hostname,
-		"server":   server.Name,
-	})
+	}))
 	r.refresh.markDirty(refreshTarget)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -369,8 +412,11 @@ func (r *Router) createReservation(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
 		return
 	}
+	if !r.ensureAgentNotSyncing(w, req, server) {
+		return
+	}
 	scopeExternalID := dhcpExternalID(scope.ExternalID, scope.Subnet, scope.ID)
-	refreshTarget := dhcpScopeRefreshTarget(server.ID, scopeExternalID, scope.Name)
+	refreshTarget := dhcpScopeRefreshTarget(server.ID, scope.ID, scopeExternalID, scope.Name)
 	finishRefresh := r.refresh.begin(refreshTarget)
 	defer finishRefresh()
 	body.ScopeID = scopeExternalID
@@ -399,13 +445,11 @@ func (r *Router) createReservation(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "update_lease_snapshot_failed", "更新 DHCP 租约快照失败")
 		return
 	}
-	r.writeAudit(req, "Created DHCP reservation", body.IP, "DHCP", "success", map[string]any{
-		"scope":  scope.Name,
-		"ip":     body.IP,
-		"mac":    body.MAC,
-		"name":   body.Name,
-		"server": server.Name,
-	})
+	r.writeAudit(req, "Created DHCP reservation", body.IP, "DHCP", "success", dhcpScopeAuditMetadata(server, scope.ID, scope.Name, map[string]any{
+		"ip":   body.IP,
+		"mac":  body.MAC,
+		"name": body.Name,
+	}))
 	r.refresh.markDirty(refreshTarget)
 	writeJSON(w, http.StatusCreated, body)
 }
@@ -434,8 +478,11 @@ func (r *Router) deleteReservation(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "server_not_found", "服务器不存在")
 		return
 	}
+	if !r.ensureAgentNotSyncing(w, req, server) {
+		return
+	}
 	scopeExternalID := dhcpExternalID(scope.ExternalID, scope.Subnet, scope.ID)
-	refreshTarget := dhcpScopeRefreshTarget(server.ID, scopeExternalID, scope.Name)
+	refreshTarget := dhcpScopeRefreshTarget(server.ID, scope.ID, scopeExternalID, scope.Name)
 	finishRefresh := r.refresh.begin(refreshTarget)
 	defer finishRefresh()
 	var ignored map[string]any
@@ -458,13 +505,11 @@ func (r *Router) deleteReservation(w http.ResponseWriter, req *http.Request) {
 reservationDeleted:
 	_ = r.store.DeleteReservation(req.Context(), id)
 	_ = r.store.DeleteLeaseByScopeIP(req.Context(), scope.ID, reservation.IP)
-	r.writeAudit(req, "Deleted DHCP reservation", reservation.IP, "DHCP", "success", map[string]any{
-		"scope":  scope.Name,
-		"ip":     reservation.IP,
-		"mac":    reservation.MAC,
-		"name":   reservation.Name,
-		"server": server.Name,
-	})
+	r.writeAudit(req, "Deleted DHCP reservation", reservation.IP, "DHCP", "success", dhcpScopeAuditMetadata(server, scope.ID, scope.Name, map[string]any{
+		"ip":   reservation.IP,
+		"mac":  reservation.MAC,
+		"name": reservation.Name,
+	}))
 	r.refresh.markDirty(refreshTarget)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -575,10 +620,19 @@ func auditResult(ok bool) string {
 	return "failed"
 }
 
-func dhcpScopeRefreshTarget(serverID, scopeExternalID, scopeName string) operationRefreshTarget {
+func (r *Router) ensureAgentNotSyncing(w http.ResponseWriter, req *http.Request, server domain.Server) bool {
+	if r.sync.IsAgentSyncRunning(req.Context(), server.ID) {
+		writeError(w, http.StatusConflict, "agent_sync_running", "当前 Agent 正在同步，请稍后再操作")
+		return false
+	}
+	return true
+}
+
+func dhcpScopeRefreshTarget(serverID, scopeID, scopeExternalID, scopeName string) operationRefreshTarget {
 	return operationRefreshTarget{
 		Kind:            operationRefreshDHCPScope,
 		ServerID:        serverID,
+		ScopeID:         scopeID,
 		ScopeExternalID: scopeExternalID,
 		ScopeName:       scopeName,
 	}
@@ -590,20 +644,21 @@ func (r *Router) markDHCPScopeDirtyAfterAgentFailure(target operationRefreshTarg
 }
 
 func filterStateForUser(state domain.State, user domain.User) domain.State {
-	if !hasPermission(user, "servers.read") {
+	canReadDashboard := hasPermission(user, "dashboard.read")
+	if !canReadDashboard && !hasPermission(user, "servers.read") {
 		state.Servers = nil
 	}
-	if !hasPermission(user, "dns.read") {
+	if !canReadDashboard && !hasPermission(user, "dns.read") {
 		state.Zones = nil
 		state.Records = nil
 	}
-	if !hasPermission(user, "dhcp.read") {
+	if !canReadDashboard && !hasPermission(user, "dhcp.read") {
 		state.Scopes = nil
 		state.Exclusions = nil
 		state.Leases = nil
 		state.Reservations = nil
 	}
-	if !hasPermission(user, "audit.read") {
+	if !canReadDashboard && !hasPermission(user, "audit.read") {
 		state.Audit = nil
 	}
 	return state
@@ -611,6 +666,19 @@ func filterStateForUser(state domain.State, user domain.User) domain.State {
 
 func refreshEvent(taskID, status, message string) realtime.RefreshEvent {
 	return realtime.RefreshEvent{Type: "runtime.refresh.all", TaskID: taskID, Status: status, Message: message}
+}
+
+func (r *Router) isRefreshTargetRunning(ctx context.Context, taskType string, target any) (bool, error) {
+	lockKey := syncsvc.RefreshTaskLockKey(taskType, target)
+	if lockKey == "" {
+		return false, nil
+	}
+	locked, err := r.realtime.Exists(ctx, lockKey)
+	if err != nil {
+		r.logger.Warn("Check refresh target lock failed", "type", taskType, "lock", lockKey, "error", err)
+		return false, err
+	}
+	return locked, nil
 }
 
 func (r *Router) enqueueZoneRefresh(serverID, zoneID, zoneName, createdBy string) (domain.RefreshTask, error) {
@@ -624,26 +692,43 @@ func (r *Router) enqueueZoneRefresh(serverID, zoneID, zoneName, createdBy string
 		zoneID = zone.ID
 		zoneName = zone.Name
 	}
+	serverName := ""
+	if server, err := r.store.GetServer(ctx, serverID); err == nil {
+		serverName = server.Name
+	}
+	target := &syncsvc.ZoneTarget{ServerID: serverID, ServerName: serverName, ZoneID: zoneID, ZoneName: zoneName}
+	running, err := r.isRefreshTargetRunning(ctx, syncsvc.RefreshDNSZoneType, target)
+	if err != nil {
+		return domain.RefreshTask{}, errRuntimeLockUnavailable
+	}
+	if running {
+		return domain.RefreshTask{}, errRefreshTargetRunning
+	}
 	task, err := r.store.CreateRefreshTask(ctx, syncsvc.RefreshDNSZoneType, map[string]any{
-		"message":  "DNS 区域刷新已排队",
-		"serverId": serverID,
-		"zoneId":   zoneID,
-		"zoneName": zoneName,
+		"message":      "DNS 区域刷新已排队",
+		"resourceType": "dns.zone",
+		"resourceId":   zoneID,
+		"resourceName": zoneName,
+		"serverId":     serverID,
+		"serverName":   serverName,
 	}, createdBy)
 	if err != nil {
 		return domain.RefreshTask{}, err
 	}
 	_ = r.realtime.PublishRefresh(ctx, realtime.RefreshEvent{Type: syncsvc.RefreshDNSZoneType, TaskID: task.ID, Status: "queued", Message: "DNS 区域刷新已排队"})
-	go r.sync.RunRefreshTask(context.Background(), task.ID, syncsvc.RefreshDNSZoneType, &syncsvc.ZoneTarget{ServerID: serverID, ZoneID: zoneID, ZoneName: zoneName})
+	go r.sync.RunRefreshTask(context.Background(), task.ID, syncsvc.RefreshDNSZoneType, target)
 	return task, nil
 }
 
 func (r *Router) enqueueServerRefresh(serverID, serverName, createdBy string) (domain.RefreshTask, error) {
 	ctx := context.Background()
 	task, err := r.store.CreateRefreshTask(ctx, syncsvc.RefreshServerType, map[string]any{
-		"message":    "Agent 同步已排队",
-		"serverId":   serverID,
-		"serverName": serverName,
+		"message":      "Agent 同步已排队",
+		"resourceType": "server",
+		"resourceId":   serverID,
+		"resourceName": serverName,
+		"serverId":     serverID,
+		"serverName":   serverName,
 	}, createdBy)
 	if err != nil {
 		return domain.RefreshTask{}, err
@@ -653,13 +738,27 @@ func (r *Router) enqueueServerRefresh(serverID, serverName, createdBy string) (d
 	return task, nil
 }
 
-func (r *Router) enqueueDHCPScopeRefresh(serverID, scopeExternalID, scopeName, createdBy string) (domain.RefreshTask, error) {
+func (r *Router) enqueueDHCPScopeRefresh(serverID, scopeID, scopeExternalID, scopeName, createdBy string) (domain.RefreshTask, error) {
 	ctx := context.Background()
+	serverName := ""
+	if server, err := r.store.GetServer(ctx, serverID); err == nil {
+		serverName = server.Name
+	}
+	target := &syncsvc.DHCPScopeTarget{ServerID: serverID, ServerName: serverName, ScopeID: scopeID, ScopeExternalID: scopeExternalID, ScopeName: scopeName}
+	running, err := r.isRefreshTargetRunning(ctx, syncsvc.RefreshDHCPScopeType, target)
+	if err != nil {
+		return domain.RefreshTask{}, errRuntimeLockUnavailable
+	}
+	if running {
+		return domain.RefreshTask{}, errRefreshTargetRunning
+	}
 	task, err := r.store.CreateRefreshTask(ctx, syncsvc.RefreshDHCPScopeType, map[string]any{
-		"message":         "DHCP 作用域刷新已排队",
-		"serverId":        serverID,
-		"scopeExternalId": scopeExternalID,
-		"scopeName":       scopeName,
+		"message":      "DHCP 作用域刷新已排队",
+		"resourceType": "dhcp.scope",
+		"resourceId":   scopeID,
+		"resourceName": scopeName,
+		"serverId":     serverID,
+		"serverName":   serverName,
 	}, createdBy)
 	if err != nil {
 		r.logger.Warn("Create DHCP scope refresh task failed", "server", serverID, "scope", scopeExternalID, "error", err)
@@ -667,6 +766,6 @@ func (r *Router) enqueueDHCPScopeRefresh(serverID, scopeExternalID, scopeName, c
 		return domain.RefreshTask{}, err
 	}
 	_ = r.realtime.PublishRefresh(ctx, realtime.RefreshEvent{Type: syncsvc.RefreshDHCPScopeType, TaskID: task.ID, Status: "queued", Message: "DHCP 作用域刷新已排队"})
-	go r.sync.RunRefreshTask(context.Background(), task.ID, syncsvc.RefreshDHCPScopeType, &syncsvc.DHCPScopeTarget{ServerID: serverID, ScopeExternalID: scopeExternalID, ScopeName: scopeName})
+	go r.sync.RunRefreshTask(context.Background(), task.ID, syncsvc.RefreshDHCPScopeType, target)
 	return task, nil
 }

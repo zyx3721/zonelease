@@ -21,6 +21,9 @@ var BuiltinPermissions = []domain.Permission{
 	{Key: "dhcp.manage", Name: "管理 DHCP", Description: "创建、删除和同步 DHCP 作用域、租约和保留地址", Category: "DHCP 管理"},
 	{Key: "refresh.manage", Name: "执行刷新", Description: "触发全量刷新和运行态同步", Category: "刷新任务"},
 	{Key: "audit.read", Name: "查看操作审计", Description: "查看操作审计和任务记录", Category: "操作审计"},
+	{Key: "export.manage", Name: "导出数据", Description: "导出 DNS、DHCP、任务和审计数据", Category: "数据导出"},
+	{Key: "notifications.read", Name: "查看通知中心", Description: "查看右上角通知中心消息和未读数量", Category: "通知中心"},
+	{Key: "notifications.manage", Name: "操作通知中心", Description: "标记通知已读和清空通知中心消息", Category: "通知中心"},
 	{Key: "settings.base.read", Name: "查看基础配置", Description: "查看系统品牌、安全时效和同步参数", Category: "系统配置"},
 	{Key: "settings.base.manage", Name: "管理基础配置", Description: "维护系统品牌、安全时效和同步参数", Category: "系统配置"},
 	{Key: "settings.users.read", Name: "查看用户配置", Description: "查看用户、用户群组和角色", Category: "系统配置"},
@@ -554,13 +557,14 @@ func normalizePermissions(permissions []string) []string {
 }
 
 var ImpliedReadPermissions = map[string]string{
-	"servers.manage":                 "servers.read",
-	"dns.manage":                     "dns.read",
-	"dhcp.manage":                    "dhcp.read",
-	"settings.base.manage":           "settings.base.read",
-	"settings.users.manage":          "settings.users.read",
-	"settings.auth.manage":           "settings.auth.read",
-	"settings.notifications.manage":  "settings.notifications.read",
+	"servers.manage":                "servers.read",
+	"dns.manage":                    "dns.read",
+	"dhcp.manage":                   "dhcp.read",
+	"notifications.manage":          "notifications.read",
+	"settings.base.manage":          "settings.base.read",
+	"settings.users.manage":         "settings.users.read",
+	"settings.auth.manage":          "settings.auth.read",
+	"settings.notifications.manage": "settings.notifications.read",
 }
 
 var impliedReadPermissions = ImpliedReadPermissions

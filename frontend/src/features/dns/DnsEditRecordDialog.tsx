@@ -15,7 +15,7 @@ import { Label } from '@/components/ui/label';
 import { updateRecordValue, type DnsRecord } from '@/lib/dns-dhcp-store';
 
 function recordTypeLabel(type: string) {
-  return type === 'A' || type === 'AAAA' ? 'A (或 AAAA)' : type;
+  return type;
 }
 
 export function DnsEditRecordDialog({
@@ -39,7 +39,7 @@ export function DnsEditRecordDialog({
   }, [record]);
 
   const displayRecord = record ?? visibleRecord;
-  const canCreatePtr = displayRecord?.type === 'A' || displayRecord?.type === 'AAAA';
+  const canCreatePtr = displayRecord?.type === 'A';
   const nextValue = value.trim();
   const disabled = !displayRecord || !nextValue || saving;
 
@@ -71,7 +71,9 @@ export function DnsEditRecordDialog({
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>编辑 DNS 记录</DialogTitle>
-          <DialogDescription className="sr-only">修改 DNS 记录值和相关 PTR 记录设置</DialogDescription>
+          <DialogDescription className="sr-only">
+            修改 DNS 记录值和相关 PTR 记录设置
+          </DialogDescription>
         </DialogHeader>
         {displayRecord ? (
           <div className="space-y-3">

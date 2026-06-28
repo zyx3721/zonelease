@@ -13,21 +13,15 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { addZone } from '@/lib/dns-dhcp-store';
+
+const defaultZoneType = 'Primary';
+const defaultDynamicUpdate = 'None';
 
 export function DnsAddZoneDialog({ serverId }: { serverId: string }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
-  const [type, setType] = useState<'Primary' | 'Secondary' | 'Stub'>('Primary');
   const [zoneMode, setZoneMode] = useState<'forward' | 'reverse'>('forward');
-  const [dynamicUpdate, setDynamicUpdate] = useState<'None' | 'Secure' | 'Nonsecure'>('None');
   const [creating, setCreating] = useState(false);
 
   const disabled = !name || !serverId || creating;
@@ -36,9 +30,7 @@ export function DnsAddZoneDialog({ serverId }: { serverId: string }) {
   useEffect(() => {
     if (!open) return;
     setName('');
-    setType('Primary');
     setZoneMode('forward');
-    setDynamicUpdate('None');
     setCreating(false);
   }, [open]);
 
@@ -49,9 +41,9 @@ export function DnsAddZoneDialog({ serverId }: { serverId: string }) {
     try {
       const result = await addZone({
         name: zoneName,
-        type,
+        type: defaultZoneType,
         reverse,
-        dynamicUpdate: reverse ? 'None' : dynamicUpdate,
+        dynamicUpdate: defaultDynamicUpdate,
         serverId,
       });
       toast.success(`${zoneName} 创建成功`);
@@ -60,8 +52,6 @@ export function DnsAddZoneDialog({ serverId }: { serverId: string }) {
       }
       setName('');
       setZoneMode('forward');
-      setType('Primary');
-      setDynamicUpdate('None');
       setOpen(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : `${zoneName} 创建失败`);
@@ -80,7 +70,9 @@ export function DnsAddZoneDialog({ serverId }: { serverId: string }) {
       <DialogContent className="sm:max-w-[620px]">
         <DialogHeader>
           <DialogTitle>新建 DNS 区域</DialogTitle>
-          <DialogDescription className="sr-only">选择 DNS 区域模式并填写区域名称、类型和动态更新策略</DialogDescription>
+          <DialogDescription className="sr-only">
+            选择 DNS 区域模式并填写区域名称
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -96,10 +88,7 @@ export function DnsAddZoneDialog({ serverId }: { serverId: string }) {
               icon={<ArrowLeftRight className="h-4 w-4" />}
               title="反向查找区域"
               description="用于 IP 地址反查域名"
-              onClick={() => {
-                setZoneMode('reverse');
-                setDynamicUpdate('None');
-              }}
+              onClick={() => setZoneMode('reverse')}
             />
           </div>
           <div>
@@ -110,43 +99,10 @@ export function DnsAddZoneDialog({ serverId }: { serverId: string }) {
               placeholder={reverse ? '1.168.192' : 'example.com'}
             />
           </div>
-          <div className={reverse ? 'grid gap-3 sm:grid-cols-1' : 'grid gap-3 sm:grid-cols-2'}>
-            <div>
-              <Label>类型</Label>
-              <Select value={type} onValueChange={v => setType(v as typeof type)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Primary">Primary</SelectItem>
-                  <SelectItem value="Secondary">Secondary</SelectItem>
-                  <SelectItem value="Stub">Stub</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {!reverse ? (
-              <div>
-                <Label>动态更新</Label>
-                <Select
-                  value={dynamicUpdate}
-                  onValueChange={v => setDynamicUpdate(v as typeof dynamicUpdate)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="None">None</SelectItem>
-                    <SelectItem value="Secure">Secure</SelectItem>
-                    <SelectItem value="Nonsecure">Nonsecure</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-          </div>
           <div className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground">
             {reverse
-              ? '反向区域只需填写网络 ID，例如 1.168.192，后端会自动补充 in-addr.arpa 后缀'
-              : '正向区域可配置动态更新策略，默认使用 None'}
+              ? '反向区域只需填写网络 ID，例如 1.168.192，后端会自动补充 .in-addr.arpa 后缀'
+              : '正向区域只需填写域名区域，例如 example.com，后端会按 Primary 区域创建'}
           </div>
         </div>
         <DialogFooter>

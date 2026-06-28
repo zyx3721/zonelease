@@ -151,11 +151,7 @@ func (r *Router) createServer(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "create_server_failed", "添加服务器失败")
 		return
 	}
-	r.writeAudit(req, "Created server", item.Name, "Server", "success", map[string]any{
-		"name":     item.Name,
-		"host":     item.Host,
-		"agentURL": item.AgentURL,
-	})
+	r.writeAudit(req, "Created server", item.Name, "Server", "success", serverAuditMetadata(item, nil))
 	writeJSON(w, http.StatusCreated, item)
 }
 
@@ -200,6 +196,11 @@ func (r *Router) deleteServer(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "接口不存在")
 		return
 	}
+	server, err := r.store.GetServer(req.Context(), id)
+	if err != nil {
+		writeError(w, statusFromErr(err), "server_not_found", "服务器不存在")
+		return
+	}
 	if err := r.store.DeleteServer(req.Context(), id); err != nil {
 		writeError(w, statusFromErr(err), "delete_server_failed", "删除服务器失败")
 		return
@@ -212,7 +213,7 @@ func (r *Router) deleteServer(w http.ResponseWriter, req *http.Request) {
 	if err := r.realtime.Delete(req.Context(), agentHealthRuntimeKey(id)); err != nil {
 		r.logger.Warn("Clear deleted agent health runtime failed", "server", id, "error", err)
 	}
-	r.writeAudit(req, "Deleted server", id, "Server", "success", map[string]any{"server": id})
+	r.writeAudit(req, "Deleted server", server.Name, "Server", "success", serverAuditMetadata(server, nil))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -231,12 +232,15 @@ func (r *Router) serverAction(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if action == "sync" {
+		if !r.ensureAgentNotSyncing(w, req, server) {
+			return
+		}
 		task, err := r.enqueueServerRefresh(server.ID, server.Name, currentUser(req).ID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "sync_server_failed", "创建 Agent 同步任务失败")
 			return
 		}
-		r.writeAudit(req, "Queued server sync", server.Name, "Server", "success", map[string]any{"server": server.Name, "serverId": server.ID})
+		r.writeAudit(req, "Queued server sync", server.Name, "Server", "success", serverAuditMetadata(server, nil))
 		writeJSON(w, http.StatusAccepted, task)
 		return
 	}
@@ -263,11 +267,11 @@ func (r *Router) serverAction(w http.ResponseWriter, req *http.Request) {
 		r.notifyAgentOffline(req.Context(), server, detail)
 	}
 	if req.URL.Query().Get("mode") != "auto" {
-		metadata := map[string]any{"server": server.Name, "serverId": server.ID, "status": status}
+		metadata := map[string]any{"status": status}
 		if strings.TrimSpace(detail) != "" {
 			metadata["error"] = detail
 		}
-		r.writeAudit(req, "Checked server health", server.Name, "Server", auditResult(status == "Online"), metadata)
+		r.writeAudit(req, "Checked server health", server.Name, "Server", auditResult(status == "Online"), serverAuditMetadata(server, metadata))
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": status, "detail": detail})
 }
