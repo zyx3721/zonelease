@@ -791,7 +791,7 @@ server {
 
     # 前端静态资源：直接读取 .output/public，避免 JS/CSS 经过 SSR 服务
     location ^~ /assets/ {
-        root /data/zonelease/admin/.output/public;
+        root /data/zonelease/frontend/.output/public;
         try_files $uri =404;
         access_log off;
         expires 1y;
@@ -800,7 +800,7 @@ server {
 
     # 站点图标
     location = /favicon.svg {
-        root /data/zonelease/admin/.output/public;
+        root /data/zonelease/frontend/.output/public;
         try_files $uri =404;
         access_log off;
         expires 7d;
