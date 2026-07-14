@@ -1993,6 +1993,15 @@ Go DHCP Agent 同步说明：
 
 # 十一、版本历史
 
+## v1.0.1 - 2026-07-15
+
+修复前端开发服务启用 Nitro 插件后 `/api` 请求无法通过 Vite 代理转发到后端的问题，同时保留生产构建的 Nitro `.output` 输出链路。
+
+- Nitro Vite 插件仅在 `vite build` 时启用。
+- `npm run dev` 恢复使用 Vite 开发服务器的 `/api` 代理配置。
+- 优化 README 文档内容。
+- 详细更新内容见 [verchanglog/v1.0.1.md](verchanglog/v1.0.1.md)。
+
 ## v1.0.0 - 2026-06-29
 
 首个正式版本，提供 Windows DNS / DHCP 统一管理控制台、Go 后端服务、DNS / DHCP Agent、刷新同步链路、操作审计、通知中心、Docker Compose 部署和 GitHub Actions 发布流水线。
