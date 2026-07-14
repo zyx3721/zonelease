@@ -33,11 +33,11 @@ ZoneLease 用于把分散在 Windows Server 上的 DNS 区域、DNS 记录、DHC
 
 |                  项目登录页                  |
 | :------------------------------------------: |
-| ![login](.github\images\zonelease-login.jpg) |
+| ![login](.github/images/zonelease-login.jpg) |
 
 |                  项目首页                  |
 | :----------------------------------------: |
-| ![home](.github\images\zonelease-home.jpg) |
+| ![home](.github/images/zonelease-home.jpg) |
 
 ## 1.3 核心功能
 
