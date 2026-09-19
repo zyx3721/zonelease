@@ -506,6 +506,7 @@ zonelease/
 
 | Version | Date | Release notes |
 | --- | --- | --- |
+| v1.1.0 | 2026-09-20 | [verchanglog/v1.1.0.md](verchanglog/v1.1.0.md) |
 | v1.0.1 | 2026-07-15 | [verchanglog/v1.0.1.md](verchanglog/v1.0.1.md) |
 | v1.0.0 | 2026-06-29 | [verchanglog/v1.0.0.md](verchanglog/v1.0.0.md) |
 
