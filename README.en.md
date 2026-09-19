@@ -290,12 +290,22 @@ server {
     listen 80;
     server_name your-domain.com;
 
-    # /assets/ is the frontend build asset prefix; only take over by extension
-    location ~* ^/assets/.+\.(js|mjs|css|map|json|svg|png|jpe?g|gif|webp|ico|woff2?|ttf)$ {
+    # Frontend static assets: serve .output/public directly so JS/CSS skip the SSR process
+    location ^~ /assets/ {
         root /data/zonelease/frontend/.output/public;
         try_files $uri =404;
+        access_log off;
         expires 1y;
         add_header Cache-Control "public, immutable";
+    }
+
+    # Site favicon
+    location = /favicon.svg {
+        root /data/zonelease/frontend/.output/public;
+        try_files $uri =404;
+        access_log off;
+        expires 7d;
+        add_header Cache-Control "public";
     }
 
     # SSE long-connection endpoint: disable proxy buffering so refresh events are not cached
@@ -334,6 +344,10 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /health {
+        proxy_pass http://127.0.0.1:8080/api/health;
     }
 }
 ```

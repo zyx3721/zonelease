@@ -290,12 +290,22 @@ server {
     listen 80;
     server_name your-domain.com;
 
-    # /assets/ 是前端构建产物路由前缀，仅按扩展名接管静态资源
-    location ~* ^/assets/.+\.(js|mjs|css|map|json|svg|png|jpe?g|gif|webp|ico|woff2?|ttf)$ {
+    # 前端静态资源：直接读取 .output/public，避免 JS/CSS 经过 SSR 服务
+    location ^~ /assets/ {
         root /data/zonelease/frontend/.output/public;
         try_files $uri =404;
+        access_log off;
         expires 1y;
         add_header Cache-Control "public, immutable";
+    }
+
+    # 站点图标
+    location = /favicon.svg {
+        root /data/zonelease/frontend/.output/public;
+        try_files $uri =404;
+        access_log off;
+        expires 7d;
+        add_header Cache-Control "public";
     }
 
     # SSE 长连接接口：关闭代理缓冲，避免刷新事件被缓存
@@ -334,6 +344,10 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    location = /health {
+        proxy_pass http://127.0.0.1:8080/api/health;
     }
 }
 ```
