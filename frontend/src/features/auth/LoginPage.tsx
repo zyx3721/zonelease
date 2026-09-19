@@ -1,5 +1,5 @@
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Eye, EyeOff, Loader2, Lock, MessageSquareText, Moon, Sun, User } from 'lucide-react';
+import { Eye, EyeOff, Loader2, Lock, Moon, QrCode, Sun, User } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { AppTooltip } from '@/components/app-tooltip';
@@ -44,9 +44,9 @@ export function LoginPage() {
   const [wecomBusy, setWecomBusy] = useState(false);
   const [error, setError] = useState('');
   const [theme, setTheme] = useState<ZlTheme>(getInitialZlTheme);
+  const [isCallbackView] = useState(() => hasWecomCallbackParams());
   const baseConfig = useBaseConfig();
-  const passwordProviders = providers.filter(item => item.type !== 'wecom');
-  const wecomProvider = providers.find(item => item.type === 'wecom');
+  const isWecomProvider = provider === 'wecom';
   const toggleLabel = theme === 'dark' ? '切换浅色背景' : '切换深色背景';
 
   useEffect(() => {
@@ -164,6 +164,10 @@ export function LoginPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isWecomProvider) {
+      startWecomLogin();
+      return;
+    }
     const normalizedUsername = username.trim();
     if (!normalizedUsername || !password) {
       setError('用户名或密码不能为空');
@@ -180,6 +184,58 @@ export function LoginPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (isCallbackView) {
+    return (
+      <main
+        data-cmp="Login"
+        className="relative flex min-h-dvh items-center justify-center overflow-hidden px-4 py-8 sm:px-6"
+        style={{
+          background:
+            'radial-gradient(circle at 50% 0%, rgba(59,130,246,0.24), transparent 30%), var(--zl-login-bg)',
+          color: 'var(--zl-text)',
+        }}
+      >
+        <div className="zl-login-grid absolute inset-0" aria-hidden="true" />
+        <section
+          className="relative z-10 flex w-full max-w-[420px] flex-col items-center gap-4 rounded-[24px] p-8 text-center"
+          style={{
+            background: 'var(--zl-login-panel-bg)',
+            border: '1px solid var(--zl-border)',
+            backdropFilter: 'blur(18px)',
+            boxShadow: 'var(--zl-login-panel-shadow)',
+          }}
+        >
+          {error ? (
+            <>
+              <p className="text-sm leading-6" style={{ color: '#fca5a5' }} role="alert">
+                {error}
+              </p>
+              <button
+                type="button"
+                onClick={() => window.location.replace('/login')}
+                className="zl-action-button rounded-xl px-4 py-2 text-sm font-medium"
+                style={{
+                  borderColor: 'var(--zl-border)',
+                  background: 'var(--zl-control-bg)',
+                  color: 'var(--zl-accent-text)',
+                }}
+              >
+                返回登录
+              </button>
+            </>
+          ) : (
+            <>
+              <Loader2 size={28} className="zl-spinner" />
+              <p className="text-sm font-medium" style={{ color: 'var(--zl-text)' }}>
+                正在处理企业微信授权，请稍候…
+              </p>
+            </>
+          )}
+        </section>
+      </main>
+    );
   }
 
   return (
@@ -266,84 +322,111 @@ export function LoginPage() {
             </div>
 
             <form className="space-y-5" onSubmit={handleSubmit} noValidate>
-              {passwordProviders.length > 0 ? (
+              {providers.length > 0 ? (
                 <LoginProviderSelect
                   value={provider}
-                  providers={passwordProviders}
+                  providers={providers}
                   onChange={setProvider}
                 />
               ) : null}
-
-              <div>
-                <label className="mb-2 block text-sm font-medium" htmlFor="username">
-                  用户名
-                </label>
-                <div className="relative">
-                  <User
-                    className="absolute left-4 top-1/2 -translate-y-1/2"
-                    size={17}
-                    style={{ color: 'var(--zl-text-muted)' }}
-                  />
-                  <input
-                    id="username"
-                    autoComplete="username"
-                    value={username}
-                    onChange={event => setUsername(event.target.value)}
-                    className="h-12 w-full rounded-2xl py-3 pl-12 pr-4 text-sm outline-none transition-all"
-                    style={{
-                      background: 'var(--zl-control-bg)',
-                      border: '1px solid var(--zl-border)',
-                      color: 'var(--zl-text)',
-                    }}
-                    placeholder="请输入用户名"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="mb-2 flex items-center justify-between">
-                  <label className="block text-sm font-medium" htmlFor="password">
-                    密码
-                  </label>
-                  <Link
-                    to="/forgot-password"
-                    className="text-xs font-semibold"
-                    style={{ color: 'var(--zl-accent-text)' }}
+              {isWecomProvider ? (
+                <div
+                  className="flex flex-col items-center gap-2 rounded-2xl px-4 py-5 text-center"
+                  style={{
+                    background: 'var(--zl-control-bg)',
+                    border: '1px solid var(--zl-border)',
+                    color: 'var(--zl-text)',
+                  }}
+                >
+                  <span
+                    className="grid h-14 w-14 place-items-center rounded-full"
+                    style={{ background: 'rgba(59,130,246,0.14)' }}
                   >
-                    忘记密码?
-                  </Link>
+                    <QrCode size={26} style={{ color: 'var(--zl-accent-text)' }} />
+                  </span>
+                  <p className="text-sm font-medium" style={{ color: 'var(--zl-text)' }}>
+                    企业微信扫码登录
+                  </p>
+                  <p className="text-xs leading-5" style={{ color: 'var(--zl-text-muted)' }}>
+                    点击下方按钮跳转至企业微信授权页，
+                    <br />
+                    使用企业微信 App 扫码确认后自动登录
+                  </p>
                 </div>
-                <div className="relative">
-                  <Lock
-                    className="absolute left-4 top-1/2 -translate-y-1/2"
-                    size={17}
-                    style={{ color: 'var(--zl-text-muted)' }}
-                  />
-                  <input
-                    id="password"
-                    autoComplete="current-password"
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={event => setPassword(event.target.value)}
-                    className="h-12 w-full rounded-2xl py-3 pl-12 pr-12 text-sm outline-none transition-all"
-                    style={{
-                      background: 'var(--zl-control-bg)',
-                      border: '1px solid var(--zl-border)',
-                      color: 'var(--zl-text)',
-                    }}
-                    placeholder="请输入密码"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(value => !value)}
-                    className="absolute right-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-xl"
-                    style={{ color: 'var(--zl-text-muted)' }}
-                    aria-label={showPassword ? '隐藏密码' : '显示密码'}
-                  >
-                    {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
-                  </button>
-                </div>
-              </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium" htmlFor="username">
+                      用户名
+                    </label>
+                    <div className="relative">
+                      <User
+                        className="absolute left-4 top-1/2 -translate-y-1/2"
+                        size={17}
+                        style={{ color: 'var(--zl-text-muted)' }}
+                      />
+                      <input
+                        id="username"
+                        autoComplete="username"
+                        value={username}
+                        onChange={event => setUsername(event.target.value)}
+                        className="h-12 w-full rounded-2xl py-3 pl-12 pr-4 text-sm outline-none transition-all"
+                        style={{
+                          background: 'var(--zl-control-bg)',
+                          border: '1px solid var(--zl-border)',
+                          color: 'var(--zl-text)',
+                        }}
+                        placeholder="请输入用户名"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="mb-2 flex items-center justify-between">
+                      <label className="block text-sm font-medium" htmlFor="password">
+                        密码
+                      </label>
+                      <Link
+                        to="/forgot-password"
+                        className="text-xs font-semibold"
+                        style={{ color: 'var(--zl-accent-text)' }}
+                      >
+                        忘记密码?
+                      </Link>
+                    </div>
+                    <div className="relative">
+                      <Lock
+                        className="absolute left-4 top-1/2 -translate-y-1/2"
+                        size={17}
+                        style={{ color: 'var(--zl-text-muted)' }}
+                      />
+                      <input
+                        id="password"
+                        autoComplete="current-password"
+                        type={showPassword ? 'text' : 'password'}
+                        value={password}
+                        onChange={event => setPassword(event.target.value)}
+                        className="h-12 w-full rounded-2xl py-3 pl-12 pr-12 text-sm outline-none transition-all"
+                        style={{
+                          background: 'var(--zl-control-bg)',
+                          border: '1px solid var(--zl-border)',
+                          color: 'var(--zl-text)',
+                        }}
+                        placeholder="请输入密码"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(value => !value)}
+                        className="absolute right-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-xl"
+                        style={{ color: 'var(--zl-text-muted)' }}
+                        aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                      >
+                        {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div aria-live="polite" className="min-h-6">
                 {error ? (
@@ -371,40 +454,9 @@ export function LoginPage() {
                   boxShadow: '0 18px 48px rgba(37,99,235,0.35)',
                 }}
               >
-                {loading ? <Loader2 size={17} className="zl-spinner" /> : null}
-                {loading ? '登录中...' : '登录'}
+                {loading || wecomBusy ? <Loader2 size={17} className="zl-spinner" /> : null}
+                {loading || wecomBusy ? '处理中...' : isWecomProvider ? '企业微信扫码登录' : '登录'}
               </button>
-
-              {wecomProvider ? (
-                <div className="space-y-4">
-                  <div
-                    className="flex items-center gap-3 text-xs"
-                    style={{ color: 'var(--zl-text-muted)' }}
-                  >
-                    <span className="h-px flex-1" style={{ background: 'var(--zl-border)' }} />
-                    或
-                    <span className="h-px flex-1" style={{ background: 'var(--zl-border)' }} />
-                  </div>
-                  <button
-                    type="button"
-                    disabled={loading || wecomBusy}
-                    onClick={startWecomLogin}
-                    className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-60"
-                    style={{
-                      background: 'linear-gradient(135deg, #07c160, #10b981)',
-                      color: '#fff',
-                      boxShadow: '0 18px 48px rgba(7,193,96,0.28)',
-                    }}
-                  >
-                    {wecomBusy ? (
-                      <Loader2 size={17} className="zl-spinner" />
-                    ) : (
-                      <MessageSquareText size={17} />
-                    )}
-                    {wecomBusy ? '登录中...' : `企业微信登录`}
-                  </button>
-                </div>
-              ) : null}
             </form>
           </div>
         </section>
@@ -438,7 +490,10 @@ function LoginProviderSelect({
 }) {
   const options = [
     { id: 'local', name: '本地账号' },
-    ...providers.map(item => ({ id: item.id, name: item.name || 'AD/LDAP' })),
+    ...providers.map(item => ({
+      id: item.id,
+      name: item.name || (item.type === 'wecom' ? '企业微信' : 'AD/LDAP'),
+    })),
   ];
 
   return (

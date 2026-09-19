@@ -1,4 +1,12 @@
-import { CheckCircle2, Network, QrCode, Save, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react';
+import {
+  CheckCircle2,
+  MessageCircle,
+  Network,
+  Save,
+  ToggleLeft,
+  ToggleRight,
+  Trash2,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import {
@@ -11,11 +19,12 @@ import { emitWecomProvidersChanged } from '@/lib/auth';
 import {
   normalizeWecomMode,
   prepareWecomConfig,
-  wecomDescription,
   wecomOptionalFields,
   wecomRequiredFields,
   wecomTestSuccessMessage,
-  WECOM_MODE_LABELS,
+  WECOM_CENTER_GUIDANCE,
+  WECOM_DIRECT_GUIDANCE,
+  WECOM_MODE_OPTIONS,
   type WecomMode,
 } from './auth-wecom';
 import {
@@ -40,7 +49,7 @@ type AuthProviderId = 'ldap' | 'wecom';
 
 type AuthProviderMeta = {
   name: string;
-  description: string | ((form: Record<string, unknown>) => string);
+  description: string;
   icon: React.ElementType;
   color: string;
 };
@@ -54,11 +63,14 @@ const authProviderMeta: Record<AuthProviderId, AuthProviderMeta> = {
   },
   wecom: {
     name: '企业微信',
-    description: form => wecomDescription(normalizeWecomMode(form.mode)),
-    icon: QrCode,
-    color: '#07c160',
+    description: '企业微信扫码登录，支持在右上角绑定企微账号',
+    icon: MessageCircle,
+    color: '#22d3ee',
   },
 };
+
+const wecomPanelDescription =
+  '启用后登录页提供企业微信扫码登录，用户可在右上角菜单绑定与解绑企微账号。';
 
 const ldapRequiredFields: SettingsField[] = [
   { key: 'host', label: '服务器地址', placeholder: 'ldap.example.com', required: true },
@@ -136,10 +148,7 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
   const Icon = meta.icon;
   const isWecom = selected === 'wecom';
   const wecomMode = normalizeWecomMode(form.mode);
-  const requiredFields = isWecom ? wecomRequiredFields(wecomMode) : ldapRequiredFields;
-  const optionalFields = isWecom ? wecomOptionalFields(wecomMode) : ldapOptionalFields;
-  const description =
-    typeof meta.description === 'function' ? meta.description(form) : meta.description;
+  const description = isWecom ? wecomPanelDescription : meta.description;
 
   async function save() {
     const displayName = name.trim();
@@ -256,109 +265,160 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
         <p className="mb-4 text-sm leading-6" style={{ color: 'var(--zl-text-muted)' }}>
           {description}
         </p>
-        <EnableToggle
-          enabled={enabled}
-          disabled={!canManage}
-          onChange={setEnabled}
-          label="启用认证"
-          enabledText="登录页将显示该认证方式"
-          disabledText="关闭后不会显示在登录页"
-        />
-        <div className="mt-4">
-          <ConfigField
-            field={{ key: 'name', label: '显示名称', placeholder: meta.name, required: true }}
-            value={name}
+        <div className="space-y-3">
+          <EnableToggle
+            enabled={enabled}
             disabled={!canManage}
+            onChange={setEnabled}
+            label="启用认证"
+            enabledText={isWecom ? '登录页将显示企业微信扫码登录方式' : '登录页将显示该认证方式'}
+            disabledText="关闭后不会显示在登录页"
+          />
+          <ConfigField
+            field={{
+              key: 'name',
+              label: '显示名称',
+              placeholder: meta.name,
+              required: !isWecom,
+            }}
+            value={name}
+            disabled={!canManage || isWecom}
             onChange={value => setName(String(value ?? ''))}
           />
+          {isWecom ? (
+            <>
+              <SectionTitle title="认证方式" />
+              <AuthModeSwitch
+                value={wecomMode}
+                disabled={!canManage}
+                onChange={mode => setForm(current => ({ ...current, mode }))}
+              />
+              <SectionTitle title="应用配置" />
+              {wecomRequiredFields(wecomMode).map(field => (
+                <ConfigField
+                  key={field.key}
+                  field={field}
+                  value={displayValue(field, form[field.key])}
+                  secretConfigured={secretConfigured(field, form)}
+                  disabled={!canManage}
+                  onChange={value => updateField(field, value)}
+                />
+              ))}
+              {wecomMode === 'direct' ? (
+                <>
+                  <WecomLoginModeSelect
+                    value={String(form.loginMode ?? 'qr')}
+                    disabled={!canManage}
+                    onChange={value => setForm(current => ({ ...current, loginMode: value }))}
+                  />
+                  {wecomOptionalFields(wecomMode).map(field => (
+                    <ConfigField
+                      key={field.key}
+                      field={field}
+                      value={displayValue(field, form[field.key])}
+                      disabled={!canManage}
+                      onChange={value => updateField(field, value)}
+                    />
+                  ))}
+                </>
+              ) : null}
+              <p
+                className="rounded-lg p-3 text-xs leading-5"
+                style={{
+                  border: '1px solid var(--zl-border)',
+                  background: 'var(--zl-control-bg)',
+                  color: 'var(--zl-text-muted)',
+                }}
+              >
+                {wecomMode === 'center' ? WECOM_CENTER_GUIDANCE : WECOM_DIRECT_GUIDANCE}
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="space-y-3 pt-2">
+                <SectionTitle title="必填配置" />
+                {ldapRequiredFields.map(field => (
+                  <ConfigField
+                    key={field.key}
+                    field={field}
+                    value={displayValue(field, form[field.key])}
+                    secretConfigured={secretConfigured(field, form)}
+                    disabled={!canManage}
+                    onChange={value => updateField(field, value)}
+                  />
+                ))}
+              </div>
+              <div className="space-y-3 pt-2">
+                <SectionTitle title="可选配置" />
+                {ldapOptionalFields.map(field => (
+                  <ConfigField
+                    key={field.key}
+                    field={field}
+                    value={displayValue(field, form[field.key])}
+                    secretConfigured={secretConfigured(field, form)}
+                    disabled={!canManage}
+                    onChange={value => updateField(field, value)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
         </div>
-        {isWecom ? (
-          <div className="mt-4">
-            <WecomModeSelect
-              value={wecomMode}
-              disabled={!canManage}
-              onChange={mode => setForm(current => ({ ...current, mode }))}
-            />
-          </div>
-        ) : null}
-        <div className="mt-4 space-y-3">
-          <SectionTitle title="必填配置" />
-          {requiredFields.map(field => (
-            <ConfigField
-              key={field.key}
-              field={field}
-              value={displayValue(field, form[field.key])}
-              secretConfigured={secretConfigured(field, form)}
-              disabled={!canManage}
-              onChange={value => updateField(field, value)}
-            />
-          ))}
-        </div>
-        {isWecom && wecomMode === 'direct' ? (
-          <div className="mt-4">
-            <WecomLoginModeSelect
-              value={String(form.loginMode ?? 'qr')}
-              disabled={!canManage}
-              onChange={value => setForm(current => ({ ...current, loginMode: value }))}
-            />
-          </div>
-        ) : null}
-        <div className="mt-5 space-y-3">
-          <SectionTitle title="可选配置" />
-          {optionalFields.map(field => (
-            <ConfigField
-              key={field.key}
-              field={field}
-              value={displayValue(field, form[field.key])}
-              secretConfigured={secretConfigured(field, form)}
-              disabled={!canManage}
-              onChange={value => updateField(field, value)}
-            />
-          ))}
-        </div>
-        {isWecom ? (
-          <p className="mt-5 text-xs leading-5" style={{ color: 'var(--zl-text-muted)' }}>
-            企业微信账号按 userid 与平台同名用户匹配登录；账号不存在或已禁用时将提示未绑定。
-          </p>
-        ) : null}
       </SettingsDetailPanel>
     </SettingsSplitLayout>
   );
 }
 
-function WecomModeSelect({
+function AuthModeSwitch({
   value,
   disabled,
   onChange,
 }: {
   value: WecomMode;
-  disabled?: boolean;
-  onChange: (value: WecomMode) => void;
+  disabled: boolean;
+  onChange: (mode: WecomMode) => void;
 }) {
   return (
-    <label className="block space-y-1.5 text-xs" style={{ color: 'var(--zl-text-muted)' }}>
-      <span>接入模式</span>
-      <Select
-        value={value}
-        disabled={disabled}
-        onValueChange={value => onChange(normalizeWecomMode(value))}
-      >
-        <SelectTrigger className="h-9 rounded-lg px-3 font-normal">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="direct" className="font-normal">
-            {WECOM_MODE_LABELS.direct}
-          </SelectItem>
-          <SelectItem value="center" className="font-normal">
-            {WECOM_MODE_LABELS.center}
-          </SelectItem>
-        </SelectContent>
-      </Select>
-      <span className="block text-[11px] leading-4">
-        切换模式并保存后，另一模式遗留的凭据会被自动清理
-      </span>
-    </label>
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {WECOM_MODE_OPTIONS.map(option => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(option.value)}
+            className={[
+              'rounded-xl border p-3 text-left transition-all duration-300 ease-out',
+              'hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0',
+              active
+                ? 'border-[rgba(96,165,250,0.56)] bg-[rgba(59,130,246,0.12)] hover:shadow-[0_6px_18px_rgba(37,99,235,0.16)]'
+                : 'hover:border-[rgba(96,165,250,0.56)] hover:bg-[rgba(59,130,246,0.06)]',
+            ].join(' ')}
+            style={active ? undefined : { borderColor: 'var(--zl-border)' }}
+          >
+            <span
+              className="flex items-center gap-1.5 text-sm font-medium"
+              style={{ color: 'var(--zl-text)' }}
+            >
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{
+                  background: active ? 'var(--zl-accent-text)' : 'var(--zl-border)',
+                }}
+              />
+              {option.label}
+            </span>
+            <span
+              className="mt-1 block text-xs leading-4"
+              style={{ color: 'var(--zl-text-muted)' }}
+            >
+              {option.description}
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -434,7 +494,7 @@ function AuthProviderCard({
           className="mt-1 line-clamp-2 text-xs leading-5"
           style={{ color: 'var(--zl-text-muted)' }}
         >
-          {typeof meta.description === 'function' ? meta.description({}) : meta.description}
+          {meta.description}
         </p>
       </div>
     </button>

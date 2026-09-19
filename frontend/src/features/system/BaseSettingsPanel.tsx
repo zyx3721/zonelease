@@ -31,7 +31,7 @@ const cards = [
   {
     id: 'security' as const,
     title: '安全时效',
-    description: '找回密码验证码、发送冷却与限流窗口',
+    description: '找回密码验证码、发送冷却、限流窗口与企业微信扫码有效期',
     icon: KeyRound,
     color: '#22c55e',
   },
@@ -413,16 +413,6 @@ function SecurityPanel({
         onChange={value => onUpdate({ resetCaptchaTtlMinutes: value })}
       />
       <NumberControl
-        label="企业微信扫码有效期"
-        description="发起企业微信登录或绑定后，完成扫码的时间上限"
-        unit="分钟"
-        value={form.wecomStateTtlMinutes}
-        min={1}
-        max={60}
-        disabled={disabled}
-        onChange={value => onUpdate({ wecomStateTtlMinutes: value })}
-      />
-      <NumberControl
         label="发送冷却时间"
         description={`验证码发送后 ${form.passwordResetSendCooldownMinutes} 分钟内不可重复请求`}
         unit="分钟"
@@ -446,6 +436,16 @@ function SecurityPanel({
         max={10}
         disabled={disabled}
         onChange={value => onUpdate({ passwordResetRateLimitMinutes: value })}
+      />
+      <NumberControl
+        label="企业微信扫码有效期"
+        description="企微授权 state 的有效窗口，超时需重新扫码登录或绑定"
+        unit="分钟"
+        value={form.wecomStateTtlMinutes}
+        min={1}
+        max={60}
+        disabled={disabled}
+        onChange={value => onUpdate({ wecomStateTtlMinutes: value })}
       />
     </div>
   );
