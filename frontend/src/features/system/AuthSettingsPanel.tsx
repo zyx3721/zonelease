@@ -21,6 +21,8 @@ import {
   prepareWecomConfig,
   wecomRequiredFields,
   wecomTestSuccessMessage,
+  WECOM_CENTER_GUIDANCE,
+  WECOM_DIRECT_GUIDANCE,
   WECOM_MODE_OPTIONS,
   type WecomMode,
 } from './auth-wecom';
@@ -303,6 +305,16 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
                   onChange={value => updateField(field, value)}
                 />
               ))}
+              <p
+                className="rounded-lg p-3 text-xs leading-5"
+                style={{
+                  border: '1px solid var(--zl-border)',
+                  background: 'var(--zl-control-bg)',
+                  color: 'var(--zl-text-muted)',
+                }}
+              >
+                {wecomMode === 'center' ? WECOM_CENTER_GUIDANCE : WECOM_DIRECT_GUIDANCE}
+              </p>
             </>
           ) : (
             <>
