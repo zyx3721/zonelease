@@ -19,7 +19,8 @@ Manage DNS/DHCP across multiple Windows Servers from one place — every change 
 </p>
 
 <p>
-  <b><a href="#what-it-does">What it does</a></b> ·
+  <b><a href="#project-preview">Preview</a></b> ·
+  <a href="#what-it-does">What it does</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#tech-stack">Tech stack</a> ·
   <a href="#quick-start">Quick start</a> ·
@@ -34,6 +35,20 @@ Manage DNS/DHCP across multiple Windows Servers from one place — every change 
 </div>
 
 ---
+
+## Project preview
+
+### Sign in
+
+Local password, AD/LDAP and WeCom (WeChat Work) QR sign-in, with CAPTCHA + email code password recovery.
+
+![Sign-in page](.github/images/zonelease-login.jpg)
+
+### Dashboard
+
+The dashboard summarizes DNS zones, DNS records, DHCP scopes, leases and server health; server cards support manual refresh and scheduled health checks, with recent activity streamed from the audit log.
+
+![Dashboard](.github/images/zonelease-home.jpg)
 
 ## What it does
 
