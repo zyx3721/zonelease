@@ -241,6 +241,8 @@ definitions:
     type: object
   router.authProviderRequest:
     properties:
+      clearConfig:
+        type: boolean
       config:
         additionalProperties: {}
         type: object

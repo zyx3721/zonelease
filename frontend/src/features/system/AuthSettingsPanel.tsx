@@ -111,6 +111,7 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
   const [form, setForm] = useState<Record<string, unknown>>({});
   const [name, setName] = useState('AD/LDAP');
   const [enabled, setEnabled] = useState(false);
+  const [clearRequested, setClearRequested] = useState(false);
   const [busy, setBusy] = useState('');
 
   const load = useCallback(async () => {
@@ -136,6 +137,9 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
       )
     );
   }, [providers, selected]);
+  useEffect(() => {
+    setClearRequested(false);
+  }, [selected, providers]);
 
   const cards = useMemo(
     () =>
@@ -161,8 +165,14 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
     }
     setBusy('save');
     try {
-      const saved = await updateAuthProvider(selected, { name: displayName, enabled, config });
+      const saved = await updateAuthProvider(selected, {
+        name: displayName,
+        enabled,
+        config,
+        clearConfig: selected === 'wecom' ? clearRequested : undefined,
+      });
       setProviders(current => ({ ...current, [selected]: saved }));
+      setClearRequested(false);
       emitWecomProvidersChanged();
       toast.success('认证配置已保存');
     } catch (error) {
@@ -187,9 +197,13 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
   function clearConfig() {
     setEnabled(false);
     setForm(selected === 'wecom' ? { mode: wecomMode } : {});
+    if (selected === 'wecom') {
+      setClearRequested(true);
+    }
   }
 
   function updateField(field: SettingsField, value: unknown) {
+    setClearRequested(false);
     setForm(current => {
       const next = { ...current, [field.key]: value };
       if (field.key === 'useTLS' && value === true) {
@@ -265,7 +279,10 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
           <EnableToggle
             enabled={enabled}
             disabled={!canManage}
-            onChange={setEnabled}
+            onChange={value => {
+              setClearRequested(false);
+              setEnabled(value);
+            }}
             label="启用认证"
             enabledText={
               isWecom ? '登录页将显示企业微信扫码登录方式' : '登录页将显示 AD/LDAP 认证登录方式'
@@ -289,7 +306,10 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
               <AuthModeSwitch
                 value={wecomMode}
                 disabled={!canManage}
-                onChange={mode => setForm(current => ({ ...current, mode }))}
+                onChange={mode => {
+                  setClearRequested(false);
+                  setForm(current => ({ ...current, mode }));
+                }}
               />
               <SectionTitle title="应用配置" />
               {wecomRequiredFields(wecomMode).map(field => (

@@ -4366,6 +4366,9 @@ const docTemplate = `{
         "router.authProviderRequest": {
             "type": "object",
             "properties": {
+                "clearConfig": {
+                    "type": "boolean"
+                },
                 "config": {
                     "type": "object",
                     "additionalProperties": {}

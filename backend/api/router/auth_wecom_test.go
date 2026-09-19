@@ -119,17 +119,30 @@ func TestSanitizeWecomConfigCenterRequiresCredentials(t *testing.T) {
 		t.Fatalf("authCenterUrl = %q, want trailing slash removed", stringValue(config["authCenterUrl"]))
 	}
 
-	// 直连遗留字段在 center 模式下应被清理，废弃凭据不残留
+	// 与 itdb-new 一致：切换模式后另一模式的配置应保留
 	config, err = sanitizeWecomConfigWithPrevious(
-		map[string]any{"mode": "center", "authCenterUrl": "https://auth.example.com", "appId": "zonelease", "appSecret": "s3cret", "corpId": "ww1", "secret": "legacy"},
+		map[string]any{"mode": "center", "authCenterUrl": "https://auth.example.com", "appId": "zonelease", "appSecret": "s3cret", "corpId": "ww1", "agentId": float64(1000002), "secret": "legacy"},
 		map[string]any{},
 		true,
 	)
 	if err != nil {
 		t.Fatalf("sanitizeWecomConfigWithPrevious returned error: %v", err)
 	}
-	if _, ok := config["secret"]; ok {
-		t.Fatal("legacy direct secret should be removed in center mode")
+	if stringValue(config["secret"]) != "legacy" || stringValue(config["corpId"]) != "ww1" {
+		t.Fatalf("direct config = %v, want preserved in center mode", config)
+	}
+
+	// 留空的另一模式密钥应从旧配置保留
+	config, err = sanitizeWecomConfigWithPrevious(
+		map[string]any{"mode": "center", "authCenterUrl": "https://auth.example.com", "appId": "zonelease", "appSecret": "s3cret", "corpId": "ww1", "agentId": float64(1000002), "secret": ""},
+		map[string]any{"secret": "saved-secret"},
+		true,
+	)
+	if err != nil {
+		t.Fatalf("sanitizeWecomConfigWithPrevious returned error: %v", err)
+	}
+	if stringValue(config["secret"]) != "saved-secret" {
+		t.Fatalf("secret = %q, want saved-secret retained across modes", stringValue(config["secret"]))
 	}
 
 	if _, err = sanitizeWecomConfigWithPrevious(

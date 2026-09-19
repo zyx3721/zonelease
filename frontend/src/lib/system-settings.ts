@@ -184,7 +184,12 @@ export function fetchAuthProviders() {
 
 export function updateAuthProvider(
   id: string,
-  payload: { name: string; enabled: boolean; config: Record<string, unknown> }
+  payload: {
+    name: string;
+    enabled: boolean;
+    config: Record<string, unknown>;
+    clearConfig?: boolean;
+  }
 ) {
   return api<AuthProvider>(`/api/settings/auth-providers/${encodeURIComponent(id)}`, {
     method: 'PUT',

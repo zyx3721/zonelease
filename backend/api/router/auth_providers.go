@@ -22,9 +22,10 @@ var authProviderSecretKeys = map[string][]string{
 }
 
 type authProviderRequest struct {
-	Name    string         `json:"name"`
-	Enabled bool           `json:"enabled"`
-	Config  map[string]any `json:"config"`
+	Name        string         `json:"name"`
+	Enabled     bool           `json:"enabled"`
+	Config      map[string]any `json:"config"`
+	ClearConfig bool           `json:"clearConfig"`
 }
 
 func (r *Router) publicAuthProviders(w http.ResponseWriter, req *http.Request) {
@@ -77,10 +78,19 @@ func (r *Router) updateAuthProvider(w http.ResponseWriter, req *http.Request, id
 		return
 	}
 	previous, _ := r.store.GetAuthProvider(req.Context(), id)
-	config, err := sanitizeAuthProviderConfigWithPrevious(id, body.Config, configMap(previous.Config), body.Enabled)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_auth_provider_config", err.Error())
-		return
+	cleared := body.ClearConfig
+	var config map[string]any
+	if cleared {
+		// 与 itdb-new 一致：清空配置在保存时执行，清空后停用且配置整体置空
+		config = map[string]any{}
+		body.Enabled = false
+	} else {
+		var err error
+		config, err = sanitizeAuthProviderConfigWithPrevious(id, body.Config, configMap(previous.Config), body.Enabled)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_auth_provider_config", err.Error())
+			return
+		}
 	}
 	item, err := r.store.UpsertAuthProvider(req.Context(), id, authProviderTypes[id], name, body.Enabled, config)
 	if err != nil {
@@ -88,7 +98,11 @@ func (r *Router) updateAuthProvider(w http.ResponseWriter, req *http.Request, id
 		writeError(w, http.StatusInternalServerError, "save_auth_provider_failed", "保存认证配置失败")
 		return
 	}
-	r.writeAudit(req, "settings.auth_provider.update", id, "System", "success", map[string]any{"provider": id, "name": item.Name, "enabled": item.Enabled})
+	metadata := map[string]any{"provider": id, "name": item.Name, "enabled": item.Enabled}
+	if cleared {
+		metadata["cleared"] = true
+	}
+	r.writeAudit(req, "settings.auth_provider.update", id, "System", "success", metadata)
 	writeJSON(w, http.StatusOK, redactAuthProvider(item))
 }
 
@@ -196,18 +210,18 @@ func sanitizeWecomConfigWithPrevious(config map[string]any, previous map[string]
 		return nil, fmt.Errorf("接入模式不正确")
 	}
 	config["mode"] = mode
-	// 清理另一模式遗留的字段，避免废弃凭据残留在配置中
-	if mode == authsvc.WecomModeDirect {
-		delete(config, "authCenterUrl")
-		delete(config, "appId")
-		delete(config, "appSecret")
-	} else {
-		delete(config, "corpId")
-		delete(config, "agentId")
-		delete(config, "secret")
-		delete(config, "loginMode")
-		delete(config, "fetchName")
+	// 与 itdb-new 一致：两种模式的配置均保留，认证方式仅决定当前启用的一组
+	// 两种密钥留空时均保留原值，切换模式不会丢失已保存凭据
+	for _, secretKey := range []string{"secret", "appSecret"} {
+		if stringValue(config[secretKey]) == "" {
+			if value := stringValue(previous[secretKey]); value != "" {
+				config[secretKey] = value
+			}
+		}
 	}
+	// 清理已下线功能的遗留字段
+	delete(config, "loginMode")
+	delete(config, "fetchName")
 	if mode == authsvc.WecomModeDirect {
 		if stringValue(config["corpId"]) == "" {
 			return nil, fmt.Errorf("企业 ID 不能为空")
@@ -217,11 +231,7 @@ func sanitizeWecomConfigWithPrevious(config map[string]any, previous map[string]
 		}
 		config["agentId"] = int(numberValue(config["agentId"]))
 		if stringValue(config["secret"]) == "" {
-			if value := stringValue(previous["secret"]); value != "" {
-				config["secret"] = value
-			} else {
-				return nil, fmt.Errorf("应用 Secret 不能为空")
-			}
+			return nil, fmt.Errorf("应用 Secret 不能为空")
 		}
 		return removeEmptyConfigValues(config), nil
 	}
@@ -233,11 +243,7 @@ func sanitizeWecomConfigWithPrevious(config map[string]any, previous map[string]
 		return nil, fmt.Errorf("应用标识不能为空")
 	}
 	if stringValue(config["appSecret"]) == "" {
-		if value := stringValue(previous["appSecret"]); value != "" {
-			config["appSecret"] = value
-		} else {
-			return nil, fmt.Errorf("应用对接密钥不能为空")
-		}
+		return nil, fmt.Errorf("应用对接密钥不能为空")
 	}
 	return removeEmptyConfigValues(config), nil
 }
