@@ -233,15 +233,6 @@ func sanitizeWecomConfigWithPrevious(config map[string]any, previous map[string]
 				return nil, fmt.Errorf("应用 Secret 不能为空")
 			}
 		}
-		loginMode := stringValue(config["loginMode"])
-		if loginMode == "" {
-			loginMode = "qr"
-		}
-		if !isAllowedValue(loginMode, "qr", "inside") {
-			return nil, fmt.Errorf("授权方式不正确")
-		}
-		config["loginMode"] = loginMode
-		config["fetchName"] = boolValue(config["fetchName"])
 		return removeEmptyConfigValues(config), nil
 	}
 	if stringValue(config["authCenterUrl"]) == "" {

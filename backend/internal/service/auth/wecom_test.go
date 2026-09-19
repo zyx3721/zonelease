@@ -25,9 +25,6 @@ func TestDecodeWecomConfigDefaults(t *testing.T) {
 	if cfg.Mode != WecomModeDirect {
 		t.Fatalf("mode = %q, want direct", cfg.Mode)
 	}
-	if cfg.LoginMode != "qr" {
-		t.Fatalf("loginMode = %q, want qr", cfg.LoginMode)
-	}
 }
 
 func TestDecodeWecomConfigCenterTrimsTrailingSlash(t *testing.T) {
@@ -88,31 +85,6 @@ func TestWecomDirectClientExchangeCachesToken(t *testing.T) {
 	}
 }
 
-func TestWecomDirectClientExchangeFetchesNameBestEffort(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/cgi-bin/gettoken":
-			_ = json.NewEncoder(w).Encode(map[string]any{"errcode": 0, "access_token": "token-1", "expires_in": 7200})
-		case "/cgi-bin/auth/getuserinfo":
-			_ = json.NewEncoder(w).Encode(map[string]any{"errcode": 0, "userid": "zhangsan"})
-		case "/cgi-bin/user/get":
-			_ = json.NewEncoder(w).Encode(map[string]any{"errcode": 40029, "errmsg": "invalid code"})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	client := &WecomDirectClient{cfg: WecomConfig{Mode: WecomModeDirect, CorpID: "ww1", AgentID: 1, Secret: "s", FetchName: true}, base: server.URL, httpc: server.Client(), now: time.Now}
-	identity, err := client.Exchange(context.Background(), "code-1")
-	if err != nil {
-		t.Fatalf("Exchange returned error: %v", err)
-	}
-	if identity.Userid != "zhangsan" || identity.Name != "" {
-		t.Fatalf("identity = %+v, want userid zhangsan with empty name (best effort)", identity)
-	}
-}
-
 func TestWecomDirectClientExchangeRejectsWecomError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -140,14 +112,6 @@ func TestWecomDirectClientAuthorizeURL(t *testing.T) {
 	}
 	if !strings.Contains(qrURL, "login_type=CorpApp") || !strings.Contains(qrURL, "appid=ww1") || !strings.Contains(qrURL, "agentid=1000002") || !strings.Contains(qrURL, "state=state-1") {
 		t.Fatalf("qr authorize url missing params: %q", qrURL)
-	}
-	insideClient := &WecomDirectClient{cfg: WecomConfig{Mode: WecomModeDirect, CorpID: "ww1", AgentID: 1000002, LoginMode: "inside"}}
-	insideURL := insideClient.AuthorizeURL("https://dns.example.com/api/auth/wecom/callback", "state-2")
-	if !strings.HasPrefix(insideURL, "https://open.weixin.qq.com/connect/oauth2/authorize?") {
-		t.Fatalf("inside authorize url = %q, want oauth entry", insideURL)
-	}
-	if !strings.HasSuffix(insideURL, "#wechat_redirect") {
-		t.Fatalf("inside authorize url = %q, want #wechat_redirect suffix", insideURL)
 	}
 }
 

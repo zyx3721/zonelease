@@ -19,11 +19,8 @@ import { emitWecomProvidersChanged } from '@/lib/auth';
 import {
   normalizeWecomMode,
   prepareWecomConfig,
-  wecomOptionalFields,
   wecomRequiredFields,
   wecomTestSuccessMessage,
-  WECOM_CENTER_GUIDANCE,
-  WECOM_DIRECT_GUIDANCE,
   WECOM_MODE_OPTIONS,
   type WecomMode,
 } from './auth-wecom';
@@ -271,7 +268,9 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
             disabled={!canManage}
             onChange={setEnabled}
             label="启用认证"
-            enabledText={isWecom ? '登录页将显示企业微信扫码登录方式' : '登录页将显示该认证方式'}
+            enabledText={
+              isWecom ? '登录页将显示企业微信扫码登录方式' : '登录页将显示 AD/LDAP 认证登录方式'
+            }
             disabledText="关闭后不会显示在登录页"
           />
           <ConfigField
@@ -304,34 +303,6 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
                   onChange={value => updateField(field, value)}
                 />
               ))}
-              {wecomMode === 'direct' ? (
-                <>
-                  <WecomLoginModeSelect
-                    value={String(form.loginMode ?? 'qr')}
-                    disabled={!canManage}
-                    onChange={value => setForm(current => ({ ...current, loginMode: value }))}
-                  />
-                  {wecomOptionalFields(wecomMode).map(field => (
-                    <ConfigField
-                      key={field.key}
-                      field={field}
-                      value={displayValue(field, form[field.key])}
-                      disabled={!canManage}
-                      onChange={value => updateField(field, value)}
-                    />
-                  ))}
-                </>
-              ) : null}
-              <p
-                className="rounded-lg p-3 text-xs leading-5"
-                style={{
-                  border: '1px solid var(--zl-border)',
-                  background: 'var(--zl-control-bg)',
-                  color: 'var(--zl-text-muted)',
-                }}
-              >
-                {wecomMode === 'center' ? WECOM_CENTER_GUIDANCE : WECOM_DIRECT_GUIDANCE}
-              </p>
             </>
           ) : (
             <>
@@ -419,35 +390,6 @@ function AuthModeSwitch({
         );
       })}
     </div>
-  );
-}
-
-function WecomLoginModeSelect({
-  value,
-  disabled,
-  onChange,
-}: {
-  value: string;
-  disabled?: boolean;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="block space-y-1.5 text-xs" style={{ color: 'var(--zl-text-muted)' }}>
-      <span>授权方式</span>
-      <Select value={value} disabled={disabled} onValueChange={onChange}>
-        <SelectTrigger className="h-9 rounded-lg px-3 font-normal">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="qr" className="font-normal">
-            PC 浏览器扫码登录
-          </SelectItem>
-          <SelectItem value="inside" className="font-normal">
-            企业微信内打开（网页授权）
-          </SelectItem>
-        </SelectContent>
-      </Select>
-    </label>
   );
 }
 

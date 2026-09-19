@@ -27,7 +27,6 @@ const (
 
 	wecomQyapiBase = "https://qyapi.weixin.qq.com"
 	wecomQRLogin   = "https://login.work.weixin.qq.com/wwlogin/sso/login"
-	wecomOAuthURL  = "https://open.weixin.qq.com/connect/oauth2/authorize"
 )
 
 var ErrWecomNotConfigured = errors.New("wecom provider is not configured")
@@ -35,12 +34,10 @@ var ErrWecomNotConfigured = errors.New("wecom provider is not configured")
 // WecomConfig 认证配置（auth_providers.config JSONB）。
 // Mode 为 direct 时使用企微直连字段；为 center 时使用统一认证中心字段。
 type WecomConfig struct {
-	Mode      string `json:"mode"`
-	CorpID    string `json:"corpId"`
-	AgentID   int    `json:"agentId"`
-	Secret    string `json:"secret"`
-	LoginMode string `json:"loginMode"`
-	FetchName bool   `json:"fetchName"`
+	Mode    string `json:"mode"`
+	CorpID  string `json:"corpId"`
+	AgentID int    `json:"agentId"`
+	Secret  string `json:"secret"`
 
 	AuthCenterURL string `json:"authCenterUrl"`
 	AppID         string `json:"appId"`
@@ -131,7 +128,6 @@ func decodeWecomConfig(data []byte) (WecomConfig, error) {
 	cfg.Mode = strings.TrimSpace(cfg.Mode)
 	cfg.CorpID = strings.TrimSpace(cfg.CorpID)
 	cfg.Secret = strings.TrimSpace(cfg.Secret)
-	cfg.LoginMode = strings.TrimSpace(cfg.LoginMode)
 	cfg.AuthCenterURL = strings.TrimRight(strings.TrimSpace(cfg.AuthCenterURL), "/")
 	cfg.AppID = strings.TrimSpace(cfg.AppID)
 	cfg.AppSecret = strings.TrimSpace(cfg.AppSecret)
@@ -141,9 +137,6 @@ func decodeWecomConfig(data []byte) (WecomConfig, error) {
 	}
 	if cfg.Mode != WecomModeDirect && cfg.Mode != WecomModeCenter {
 		return WecomConfig{}, fmt.Errorf("unknown wecom mode %q", cfg.Mode)
-	}
-	if cfg.LoginMode == "" {
-		cfg.LoginMode = "qr"
 	}
 	if cfg.Mode == WecomModeDirect {
 		if cfg.CorpID == "" || cfg.Secret == "" || cfg.AgentID <= 0 {
@@ -197,27 +190,7 @@ func (c *WecomDirectClient) Exchange(ctx context.Context, credential string) (We
 	if resp.Userid == "" {
 		return WecomIdentity{}, errors.New("getuserinfo returned empty userid")
 	}
-	identity := WecomIdentity{Userid: resp.Userid}
-	if c.cfg.FetchName {
-		identity.Name, _ = c.fetchName(ctx, token, resp.Userid)
-	}
-	return identity, nil
-}
-
-func (c *WecomDirectClient) fetchName(ctx context.Context, token, userid string) (string, error) {
-	var resp struct {
-		Errcode int    `json:"errcode"`
-		Errmsg  string `json:"errmsg"`
-		Name    string `json:"name"`
-	}
-	if err := c.getJSON(ctx, fmt.Sprintf("%s/cgi-bin/user/get?access_token=%s&userid=%s",
-		c.base, url.QueryEscape(token), url.QueryEscape(userid)), &resp); err != nil {
-		return "", err
-	}
-	if resp.Errcode != 0 {
-		return "", fmt.Errorf("user/get errcode=%d errmsg=%s", resp.Errcode, resp.Errmsg)
-	}
-	return resp.Name, nil
+	return WecomIdentity{Userid: resp.Userid}, nil
 }
 
 // token 返回缓存的 access_token；到期前 5 分钟主动刷新，并发调用仅触发一次请求。
@@ -252,13 +225,6 @@ func (c *WecomDirectClient) AuthorizeURL(redirectURI, state string) string {
 	query := url.Values{}
 	query.Set("appid", c.cfg.CorpID)
 	query.Set("agentid", strconv.Itoa(c.cfg.AgentID))
-	if c.cfg.LoginMode == "inside" {
-		query.Set("redirect_uri", redirectURI)
-		query.Set("response_type", "code")
-		query.Set("scope", "snsapi_base")
-		query.Set("state", state)
-		return wecomOAuthURL + "?" + query.Encode() + "#wechat_redirect"
-	}
 	query.Set("login_type", "CorpApp")
 	query.Set("redirect_uri", redirectURI)
 	query.Set("state", state)

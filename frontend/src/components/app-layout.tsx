@@ -1042,6 +1042,18 @@ export function AppLayout({ children }: { children?: ReactNode }) {
                     boxShadow: 'var(--zl-menu-shadow)',
                   }}
                 >
+                  <button
+                    type="button"
+                    className="zl-action-button zl-menu-action-item flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm"
+                    role="menuitem"
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      setPasswordDialogOpen(true);
+                    }}
+                  >
+                    <KeyRound size={16} />
+                    修改密码
+                  </button>
                   {wecomBindAvailable ? (
                     <button
                       type="button"
@@ -1059,18 +1071,6 @@ export function AppLayout({ children }: { children?: ReactNode }) {
                       {user?.wecomBound ? '解绑企微' : '绑定企微'}
                     </button>
                   ) : null}
-                  <button
-                    type="button"
-                    className="zl-action-button zl-menu-action-item flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm"
-                    role="menuitem"
-                    onClick={() => {
-                      setUserMenuOpen(false);
-                      setPasswordDialogOpen(true);
-                    }}
-                  >
-                    <KeyRound size={16} />
-                    修改密码
-                  </button>
                   <button
                     type="button"
                     className="zl-action-button zl-menu-action-item zl-danger-button flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm"

@@ -71,32 +71,6 @@ export function wecomRequiredFields(mode: WecomMode): SettingsField[] {
   ];
 }
 
-export function wecomOptionalFields(mode: WecomMode): SettingsField[] {
-  if (mode === 'center') {
-    return [];
-  }
-  return [
-    {
-      key: 'fetchName',
-      label: '获取成员姓名',
-      type: 'checkbox',
-      helper:
-        '登录时额外调用企微通讯录接口补全姓名，需要在企微后台授予通讯录读取权限，取不到时不影响登录',
-    },
-  ];
-}
-
-export const WECOM_DIRECT_GUIDANCE =
-  '配置步骤：企业微信管理后台 →「应用管理」→ 自建应用（记录 AgentID 与 Secret）→' +
-  '在「网页授权及 JS-SDK」中把回调域名加入可信域名 → 在「企业可信 IP」中加入本服务出口 IP。' +
-  '扫码确认后企业微信会携带授权码跳转至「回调地址前缀 + /login」完成登录或绑定。';
-
-export const WECOM_CENTER_GUIDANCE =
-  '配置步骤：部署企业微信统一认证中心（wecom-auth-center）→ 在认证中心 config.yaml 的 apps 下为本系统新增条目：' +
-  'domain 填本系统外部访问地址、callback_path 填 /login、app_secret 填 32 位以上随机密钥 →' +
-  '在上方填写认证中心地址、应用标识与应用密钥（与认证中心保持一致）→ 重启认证中心使配置生效。' +
-  '登录时本系统跳转认证中心完成企微扫码，认证中心携带一次性 ticket 回跳本系统 /login 完成登录或绑定。';
-
 export function prepareWecomConfig(
   form: Record<string, unknown>,
   enabled: boolean
@@ -115,11 +89,6 @@ export function prepareWecomConfig(
       return { config: {}, error: '应用 Secret 不能为空' };
     }
     next.agentId = Number(next.agentId);
-    const loginMode = String(next.loginMode ?? 'qr');
-    if (loginMode !== 'qr' && loginMode !== 'inside') {
-      return { config: {}, error: '授权方式不正确' };
-    }
-    next.loginMode = loginMode;
     return { config: removeEmpty(next), error: '' };
   }
   const baseURL = String(next.authCenterUrl ?? '').trim();
