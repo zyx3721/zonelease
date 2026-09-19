@@ -41,7 +41,7 @@ ZoneLease 用于把分散在 Windows Server 上的 DNS 区域、DNS 记录、DHC
 
 ## 1.3 核心功能
 
-- **用户认证**：默认管理员初始化、登录、注销、当前用户查询、修改密码、找回密码验证码流程。
+- **用户认证**：默认管理员初始化、登录、注销、当前用户查询、修改密码、找回密码验证码流程，以及企业微信扫码登录（支持直连企业微信和统一认证中心两种接入模式）。
 - **服务器管理**：登记 Windows DNS / DHCP Agent 地址、可选保存 API Key、删除服务器、手动健康检查。
 - **仪表板**：汇总 DNS 区域、DNS 记录、DHCP 作用域、DHCP 租约、服务器在线状态和最近操作，并在每个 Agent 状态卡片中展示对应的区域 / 作用域、记录 / 租约 / 保留地址快照统计。
 - **DNS 管理**：默认读取数据库中的 DNS 区域与记录快照，支持区域级刷新、创建 / 删除 DNS 区域，以及创建、编辑和删除 DNS 记录。
@@ -146,7 +146,7 @@ zonelease/
 │       │   ├── auth/                 # 登录和忘记密码页面
 │       │   ├── dns/                  # DNS 管理页排序、色彩标识、表头、新建区域、记录操作和导出组件
 │       │   ├── dhcp/                 # DHCP 管理页作用域、排除范围、保留地址创建 / 编辑和导出组件
-│       │   └── system/               # 系统配置中心、基础配置、Agent 判定、用户/群组/角色、认证和邮件配置面板
+│       │   └── system/               # 系统配置中心、基础配置、Agent 判定、用户/群组/角色、AD/LDAP 与企业微信认证和邮件配置面板
 │       ├── lib/                      # API 客户端、认证、品牌基础配置快照、刷新事件、错误处理和工具函数
 │       ├── routes/                   # TanStack Router 文件路由，包含仪表板、DNS、DHCP、审计和设置页面
 │       ├── routeTree.gen.ts          # TanStack Router 自动生成路由树
@@ -1153,6 +1153,14 @@ C:\dhcp-agent
 
 后端首次启动且用户表为空时会创建 `admin / 123456` 默认管理员。登录后可在右上角用户菜单中修改密码；修改成功后前端会清除当前会话并返回登录页。
 
+启用企业微信认证后，登录页会出现「企业微信登录」入口，企业微信账号按 userid 与平台同名用户匹配建立会话；账号不存在或已禁用时会在登录页提示未绑定。接入模式分为两种：
+
+- **直连企业微信**：后端签发防伪 `state` 并跳转企业微信授权页，扫码后由后端用授权码换取用户身份；企业 ID、应用 AgentID 和应用 Secret 保存本平台。
+- **统一认证中心**：跳转 wecom-auth-center 完成企微扫码后携带一次性 `ticket` 回跳，后端使用应用对接密钥签名调用认证中心 `/api/verify` 换取身份；企微凭据集中保管在认证中心。
+- 认证中心模式下，需在认证中心 `config.yaml` 的 `apps` 中为本系统登记 `domain`（zonelease 对外地址）与 `callback_path: /api/auth/wecom/callback`，并使 `appId` / `appSecret` 与两侧配置一致。
+
+两种模式回调成功后都会先建立会话并签发 60 秒一次性登录票据，再重定向回登录页由前端调用 `POST /api/auth/wecom/exchange` 换取正式会话。
+
 找回密码流程包含图形验证码、身份校验、邮箱验证码发送和密码重置四步。图形验证码 Token 使用 `JWT_SECRET` 签名并携带过期时间，不写入 Redis；生产环境必须使用 `SERVER_MODE=release`，并在「系统配置」中的「邮件媒介」启用找回密码发送。
 
 ## 6.2 添加 Windows 服务器
@@ -1286,7 +1294,7 @@ DNS 区域卡片右侧刷新按钮会调用 `POST /api/dns/zones/{id}/refresh`�
 
 - **基础配置**：维护站点名称、登录展示、控制台品牌、找回密码安全时效、同步并发、操作后刷新等待、Agent 离线判定次数、Agent 连接超时、Agent 操作超时、Agent 全量同步超时、自动健康检查间隔和自动检查并发。
 - **用户配置**：维护平台用户、用户群组和角色权限。启用 AD/LDAP 后，外部账号也必须先在用户中创建并启用。
-- **认证配置**：维护 AD/LDAP 目录认证连接、必填参数、可选 TLS 参数，并支持连接测试。
+- **认证配置**：维护 AD/LDAP 目录认证和企业微信认证；企业微信支持「直连企业微信」和「统一认证中心」两种接入模式，模式切换保存后自动清理另一模式遗留凭据，并支持连接测试。
 - **通知配置**：仅保留邮件 SMTP 配置，主要用于忘记密码流程发送邮箱验证码。
 
 邮件媒介保存后：
@@ -1484,13 +1492,27 @@ swag init -g cmd/server/main.go -o docs
 ## 10.1 认证
 
 - `POST /api/auth/login` - 登录，返回会话 Token、本次认证来源、用户信息、最长过期时间和最近活跃时间；用户名或密码为空会返回 `invalid_login`
-- `GET /api/auth/providers` - 获取公开认证方式，登录页用于读取已启用的本地或 AD/LDAP 登录方式
+- `GET /api/auth/providers` - 获取公开认证方式，登录页用于读取已启用的本地、AD/LDAP 或企业微信登录方式
 - `POST /api/auth/logout` - 注销当前会话；携带 Bearer Token 时后端会删除对应会话，未携带或会话已失效时也会幂等返回成功
 - `GET /api/auth/me` - 获取当前登录用户；Token 无效或过期时返回 `unauthorized`
 - `POST /api/auth/change-password` - 修改当前用户密码
   - 请求字段为 `old_password`、`new_password`、`confirm_password`
   - 新密码至少 6 位，且不能与旧密码相同
   - 修改成功后写入 `Changed password` 审计记录
+
+- `GET /api/auth/wecom/authorize` - 发起企业微信登录，302 跳转到企业微信授权页（直连模式，携带 `JWT_SECRET` 签名的防伪 state）或统一认证中心登录页（认证中心模式）
+  - 企业微信认证未启用时返回 404，配置不完整时返回 503
+  - 直连模式回调地址按配置的 `redirectPrefix` 推断，未配置时按 `X-Forwarded-Proto` / `X-Forwarded-Host` 或当前请求地址推断
+- `GET /api/auth/wecom/callback` - 企业微信登录回调
+  - 直连模式校验防伪 state（有效期 5 分钟、签名防伪造）后用授权码换取企业微信 userid
+  - 认证中心模式使用 `HMAC-SHA256(key=app_secret, msg=app
++ticket
++ts)` 签名调用统一认证中心 `/api/verify` 一次性换取 userid
+  - 按 userid 匹配同名平台用户并建立会话，签发 60 秒一次性登录票据后 302 回前端登录页；用户不存在或禁用时携带 `wecomError=user_not_provisioned` 回跳
+  - 成功后写入 `User login` 审计记录，metadata 包含 `provider=wecom` 与企业微信 userid
+- `POST /api/auth/wecom/exchange` - 交换企业微信登录票据
+  - 请求字段为 `ticket`；票据取出即删，60 秒有效
+  - 成功返回与会话结构一致的 Token、认证来源 `wecom`、用户信息、最长过期时间和最近活跃时间
 
 登录请求示例：
 
@@ -1778,14 +1800,16 @@ DHCP 字段、Agent 接口、数据库快照策略和当前操作边界详见 [d
   - `dashboard.read` 会允许仪表板读取统计所需的 Agent、DNS、DHCP 和最近活动数据
   - 后端对 DNS、DHCP、Agent、刷新、通知中心和系统配置接口执行权限校验，前端会按权限隐藏对应操作入口；DNS / DHCP 管理页右上刷新和局部刷新按钮需要 `refresh.manage`
 - `GET /api/settings/auth-providers` - 获取认证配置列表
-  - 当前返回 AD/LDAP 认证配置
+  - 当前返回 AD/LDAP 与企业微信认证配置；企业微信的应用 Secret、应用对接密钥和 LDAP 绑定密码不回显，只返回对应 presence 标记
 - `PUT /api/settings/auth-providers/{id}` - 保存认证配置
-  - `{id}` 当前仅支持 `ldap`
-  - 请求字段包含 `name`、`enabled` 和 LDAP 连接配置
-  - 密码留空且已有配置时保留原绑定密码
+  - `{id}` 当前支持 `ldap` 和 `wecom`
+  - 请求字段包含 `name`、`enabled` 和认证连接配置；企业微信配置需携带 `mode`（`direct` 或 `center`）
+  - 密码留空且已有配置时保留原值：`ldap` 保留绑定密码，`wecom` 直连保留应用 Secret、认证中心模式保留应用对接密钥
+  - 企业微信切换接入模式保存后，会自动清理另一模式遗留的配置字段
 - `POST /api/settings/auth-providers/{id}/test` - 测试认证配置
-  - `{id}` 当前仅支持 `ldap`
-  - 返回 `matchedUsers` 表示 LDAP 搜索匹配用户数量
+  - `ldap` 返回 LDAP 搜索匹配用户数量
+  - `wecom` 直连模式验证企业微信应用凭据（gettoken），认证中心模式检查认证中心 `/healthz` 健康状态，返回 `mode` 与 `detail`
+  - `ldap` 返回 `matchedUsers` 表示 LDAP 搜索匹配用户数量
 - `GET /api/settings/notifications` - 获取通知媒介列表
   - 当前返回 `email` 邮件媒介
   - SMTP 密码只返回 `passwordConfigured`，不返回原文

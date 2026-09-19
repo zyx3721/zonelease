@@ -172,6 +172,31 @@ export async function login(username: string, password: string, provider = 'loca
   return session;
 }
 
+export async function exchangeWecomTicket(ticket: string) {
+  const session = await api<AuthSession>('/api/auth/wecom/exchange', {
+    method: 'POST',
+    auth: false,
+    body: JSON.stringify({ ticket }),
+  });
+  persistSession(session);
+  setCurrentUserSnapshot(session.user);
+  return session;
+}
+
+export const WECOM_ERROR_MESSAGES: Record<string, string> = {
+  state_invalid: '登录状态校验失败，请重新发起企业微信登录',
+  state_expired: '登录已超时，请重新发起企业微信登录',
+  wecom_error: '企业微信身份获取失败，请稍后重试',
+  center_error: '统一认证中心连接失败，请稍后重试',
+  user_not_provisioned: '该企业微信账号未绑定平台用户，请使用与企微 userid 同名的平台账号或联系管理员',
+  login_failed: '企业微信登录失败，请稍后重试',
+};
+
+export function wecomErrorMessage(code: string | null) {
+  if (!code) return '';
+  return WECOM_ERROR_MESSAGES[code] ?? '企业微信登录未完成，请重新发起登录';
+}
+
 export function fetchPublicAuthProviders() {
   if (cachedPublicAuthProviders && cachedPublicAuthProviders.expiresAt > Date.now()) {
     return Promise.resolve(cachedPublicAuthProviders.value);

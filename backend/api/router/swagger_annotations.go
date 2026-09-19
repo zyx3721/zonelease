@@ -23,12 +23,49 @@ func swaggerLogin() {}
 
 // swaggerPublicAuthProviders godoc
 // @Summary 获取公开认证方式
-// @Description 无需登录，登录页用于读取已启用的本地或 AD/LDAP 认证方式。
+// @Description 无需登录，登录页用于读取已启用的本地、AD/LDAP 或企业微信认证方式。
 // @Tags Auth
 // @Produce json
 // @Success 200 {object} publicAuthProviderListResponse
 // @Router /api/auth/providers [get]
 func swaggerPublicAuthProviders() {}
+
+// swaggerWecomAuthorize godoc
+// @Summary 发起企业微信登录
+// @Description 无需登录。企业微信认证启用后，302 跳转到企业微信授权页（直连模式，携带防伪 state）或统一认证中心登录页（认证中心模式）；未启用时返回 404，配置不完整时返回 503。
+// @Tags Auth
+// @Produce json
+// @Success 302 {string} string "授权跳转地址"
+// @Failure 404 {object} errorDocResponse
+// @Failure 503 {object} errorDocResponse
+// @Router /api/auth/wecom/authorize [get]
+func swaggerWecomAuthorize() {}
+
+// swaggerWecomCallback godoc
+// @Summary 企业微信登录回调
+// @Description 无需登录。直连模式校验防伪 state 后用 code 换取企业微信用户身份；认证中心模式用 ticket 调用统一认证中心 /api/verify 换取身份。匹配到同名平台用户后建立会话并签发一次性登录票据，302 重定向回前端登录页；未匹配用户时携带 wecomError=user_not_provisioned 回跳。
+// @Tags Auth
+// @Produce json
+// @Param code query string false "直连模式：企业微信授权码"
+// @Param state query string false "直连模式：防伪 state"
+// @Param ticket query string false "认证中心模式：一次性登录票据"
+// @Success 302 {string} string "回跳前端登录页"
+// @Failure 404 {object} errorDocResponse
+// @Router /api/auth/wecom/callback [get]
+func swaggerWecomCallback() {}
+
+// swaggerWecomExchange godoc
+// @Summary 交换企业微信登录票据
+// @Description 无需登录。前端从登录页 URL 获取一次性 wecomTicket 后调用本接口换取正式会话；票据取出即删，60 秒有效。
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param body body wecomExchangeRequest true "登录票据"
+// @Success 200 {object} loginResponse
+// @Failure 400 {object} errorDocResponse
+// @Failure 401 {object} errorDocResponse
+// @Router /api/auth/wecom/exchange [post]
+func swaggerWecomExchange() {}
 
 // swaggerLogout godoc
 // @Summary 注销当前会话
@@ -539,7 +576,7 @@ func swaggerListPermissions() {}
 
 // swaggerListAuthProviders godoc
 // @Summary 获取认证配置列表
-// @Description 当前支持 AD/LDAP 目录认证配置，启用后登录页显示对应认证方式。
+// @Description 当前支持 AD/LDAP 目录认证与企业微信认证（直连或统一认证中心），启用后登录页显示对应认证方式。
 // @Tags Settings
 // @Produce json
 // @Security BearerAuth
@@ -552,12 +589,12 @@ func swaggerListAuthProviders() {}
 
 // swaggerUpdateAuthProvider godoc
 // @Summary 保存认证配置
-// @Description 当前仅支持 ldap；绑定密码留空且已有配置时保留原值。
+// @Description 支持 ldap 与 wecom；ldap 绑定密码、wecom 的应用 Secret 和应用对接密钥留空且已有配置时保留原值。
 // @Tags Settings
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param id path string true "认证配置 ID，当前为 ldap"
+// @Param id path string true "认证配置 ID，当前为 ldap 或 wecom"
 // @Param body body authProviderRequest true "认证配置"
 // @Success 200 {object} authProviderResponse
 // @Failure 400 {object} errorDocResponse
@@ -570,11 +607,11 @@ func swaggerUpdateAuthProvider() {}
 
 // swaggerTestAuthProvider godoc
 // @Summary 测试认证配置
-// @Description 当前仅支持 ldap，返回 LDAP 搜索匹配用户数量。
+// @Description ldap 返回 LDAP 搜索匹配用户数量；wecom 直连模式验证企业微信应用凭据，认证中心模式检查认证中心健康状态，返回 mode 与 detail。
 // @Tags Settings
 // @Produce json
 // @Security BearerAuth
-// @Param id path string true "认证配置 ID，当前为 ldap"
+// @Param id path string true "认证配置 ID，当前为 ldap 或 wecom"
 // @Success 200 {object} authProviderTestResponse
 // @Failure 401 {object} errorDocResponse
 // @Failure 403 {object} errorDocResponse

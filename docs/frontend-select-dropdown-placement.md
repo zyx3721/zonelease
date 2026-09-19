@@ -21,6 +21,7 @@
 | Agent 设置 | `frontend/src/routes/_authenticated/settings.tsx` | Agent 角色选择仅保留 DNS 和 DHCP，默认显示“请选择角色”，下拉开头显示禁用的“请选择角色”占位项，触发器和选项文本不加粗 | Radix `popper` |
 | 操作审计 | `frontend/src/routes/_authenticated/audit.tsx` | 显示数量选择 | Radix `popper` |
 | 导出弹窗 | `frontend/src/components/export-dialog.tsx` | 通用导出文件扩展名选择，支持 XLSX / XLS / CSV / TXT | Radix `popper` |
+| 系统配置 / 认证配置 | `frontend/src/features/system/AuthSettingsPanel.tsx` | 企业微信认证的接入模式（直连企业微信 / 统一认证中心）与授权方式（PC 扫码 / 企业微信内打开）选择，均复用 `frontend/src/components/ui/select.tsx` | Radix `popper` |
 
 `frontend/src/components/agent-scope-toolbar.tsx` 是 DNS / DHCP 页面共用的当前 Agent 选择控件；`frontend/src/components/export-dialog.tsx` 是任务日志和审计日志共用的导出格式选择控件。两者仍按实际承载页面在上表登记。
 

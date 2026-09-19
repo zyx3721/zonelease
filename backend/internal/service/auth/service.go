@@ -89,11 +89,12 @@ type Service struct {
 	store    Store
 	cfg      Config
 	notifier ResetNotifier
+	tickets  *loginTicketStore
 	now      func() time.Time
 }
 
 func New(store Store, cfg Config) *Service {
-	return &Service{store: store, cfg: cfg, now: time.Now}
+	return &Service{store: store, cfg: cfg, tickets: newLoginTicketStore(), now: time.Now}
 }
 
 func (s *Service) SetNotifier(notifier ResetNotifier) {

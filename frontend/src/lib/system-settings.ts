@@ -47,7 +47,7 @@ export type NotificationTemplatePreview = {
 };
 
 export type AuthProvider = {
-  id: 'ldap';
+  id: 'ldap' | 'wecom';
   type: string;
   name: string;
   enabled: boolean;
@@ -192,7 +192,7 @@ export function updateAuthProvider(
 }
 
 export function testAuthProvider(id: string) {
-  return api<{ status: string; matchedUsers: number }>(
+  return api<{ status: string; matchedUsers?: number; mode?: string; detail?: string }>(
     `/api/settings/auth-providers/${encodeURIComponent(id)}/test`,
     { method: 'POST' }
   );

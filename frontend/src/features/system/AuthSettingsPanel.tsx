@@ -1,4 +1,4 @@
-import { CheckCircle2, Network, Save, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react';
+import { CheckCircle2, Network, QrCode, Save, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import {
@@ -7,6 +7,16 @@ import {
   updateAuthProvider,
   type AuthProvider,
 } from '@/lib/system-settings';
+import {
+  normalizeWecomMode,
+  prepareWecomConfig,
+  wecomDescription,
+  wecomOptionalFields,
+  wecomRequiredFields,
+  wecomTestSuccessMessage,
+  WECOM_MODE_LABELS,
+  type WecomMode,
+} from './auth-wecom';
 import {
   ActionButton,
   ConfigField,
@@ -17,60 +27,73 @@ import {
   cardStyle,
   type SettingsField,
 } from './settings-primitives';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
-type AuthProviderId = 'ldap';
+type AuthProviderId = 'ldap' | 'wecom';
 
-const authProviderMeta: Record<
-  AuthProviderId,
-  {
-    name: string;
-    description: string;
-    icon: React.ElementType;
-    color: string;
-    requiredFields: SettingsField[];
-    optionalFields: SettingsField[];
-  }
-> = {
+type AuthProviderMeta = {
+  name: string;
+  description: string | ((form: Record<string, unknown>) => string);
+  icon: React.ElementType;
+  color: string;
+};
+
+const authProviderMeta: Record<AuthProviderId, AuthProviderMeta> = {
   ldap: {
     name: 'AD/LDAP',
     description: '通过企业目录服务实现统一身份认证，支持 AD/LDAP 登录',
     icon: Network,
     color: '#38bdf8',
-    requiredFields: [
-      { key: 'host', label: '服务器地址', placeholder: 'ldap.example.com', required: true },
-      { key: 'port', label: '端口', placeholder: '389', required: true, inputMode: 'numeric' },
-      { key: 'baseDN', label: 'Base DN', placeholder: 'dc=example,dc=com', required: true },
-      {
-        key: 'userFilter',
-        label: '用户过滤器',
-        placeholder: '(sAMAccountName={username})',
-        required: true,
-      },
-      {
-        key: 'bindDN',
-        label: '绑定 DN',
-        placeholder: 'cn=readonly,dc=example,dc=com',
-        required: true,
-      },
-      {
-        key: 'bindPassword',
-        label: '绑定密码',
-        placeholder: '请输入绑定账号密码',
-        required: true,
-        type: 'password',
-      },
-    ],
-    optionalFields: [
-      { key: 'useTLS', label: '启用 LDAPS', type: 'checkbox' },
-      { key: 'startTLS', label: '启用 STARTTLS', type: 'checkbox' },
-      { key: 'insecureSkipVerify', label: '跳过证书校验', type: 'checkbox' },
-      { key: 'timeoutSeconds', label: '超时时间', placeholder: '8', type: 'number' },
-      { key: 'groupFilter', label: '用户组过滤器', placeholder: 'cn=ops,dc=example,dc=com' },
-    ],
+  },
+  wecom: {
+    name: '企业微信',
+    description: form =>
+      wecomDescription(normalizeWecomMode(form.mode)),
+    icon: QrCode,
+    color: '#07c160',
   },
 };
 
-const authProviderOrder: AuthProviderId[] = ['ldap'];
+const ldapRequiredFields: SettingsField[] = [
+  { key: 'host', label: '服务器地址', placeholder: 'ldap.example.com', required: true },
+  { key: 'port', label: '端口', placeholder: '389', required: true, inputMode: 'numeric' },
+  { key: 'baseDN', label: 'Base DN', placeholder: 'dc=example,dc=com', required: true },
+  {
+    key: 'userFilter',
+    label: '用户过滤器',
+    placeholder: '(sAMAccountName={username})',
+    required: true,
+  },
+  {
+    key: 'bindDN',
+    label: '绑定 DN',
+    placeholder: 'cn=readonly,dc=example,dc=com',
+    required: true,
+  },
+  {
+    key: 'bindPassword',
+    label: '绑定密码',
+    placeholder: '请输入绑定账号密码',
+    required: true,
+    type: 'password',
+  },
+];
+
+const ldapOptionalFields: SettingsField[] = [
+  { key: 'useTLS', label: '启用 LDAPS', type: 'checkbox' },
+  { key: 'startTLS', label: '启用 STARTTLS', type: 'checkbox' },
+  { key: 'insecureSkipVerify', label: '跳过证书校验', type: 'checkbox' },
+  { key: 'timeoutSeconds', label: '超时时间', placeholder: '8', type: 'number' },
+  { key: 'groupFilter', label: '用户组过滤器', placeholder: 'cn=ops,dc=example,dc=com' },
+];
+
+const authProviderOrder: AuthProviderId[] = ['ldap', 'wecom'];
 
 export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean }) {
   const [providers, setProviders] = useState<Record<string, AuthProvider>>({});
@@ -97,7 +120,7 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
     const provider = providers[selected];
     setEnabled(provider?.enabled ?? false);
     setName(provider?.name ?? authProviderMeta[selected].name);
-    setForm(normalizeConfig(provider?.config));
+    setForm(normalizeConfig(selected === 'wecom' ? { mode: 'direct', ...provider?.config } : provider?.config));
   }, [providers, selected]);
 
   const cards = useMemo(
@@ -107,6 +130,11 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
   );
   const meta = authProviderMeta[selected];
   const Icon = meta.icon;
+  const isWecom = selected === 'wecom';
+  const wecomMode = normalizeWecomMode(form.mode);
+  const requiredFields = isWecom ? wecomRequiredFields(wecomMode) : ldapRequiredFields;
+  const optionalFields = isWecom ? wecomOptionalFields(wecomMode) : ldapOptionalFields;
+  const description = typeof meta.description === 'function' ? meta.description(form) : meta.description;
 
   async function save() {
     const displayName = name.trim();
@@ -135,7 +163,11 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
     setBusy('test');
     try {
       const result = await testAuthProvider(selected);
-      toast.success(`认证连接测试通过，成功匹配 ${result.matchedUsers} 个用户`);
+      if (selected === 'wecom') {
+        toast.success(wecomTestSuccessMessage(result.detail));
+      } else {
+        toast.success(`认证连接测试通过，成功匹配 ${result.matchedUsers ?? 0} 个用户`);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '认证连接测试失败');
     } finally {
@@ -145,7 +177,7 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
 
   function clearConfig() {
     setEnabled(false);
-    setForm({});
+    setForm(selected === 'wecom' ? { mode: wecomMode } : {});
   }
 
   function updateField(field: SettingsField, value: unknown) {
@@ -216,7 +248,7 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
         }
       >
         <p className="mb-4 text-sm leading-6" style={{ color: 'var(--zl-text-muted)' }}>
-          {meta.description}
+          {description}
         </p>
         <EnableToggle
           enabled={enabled}
@@ -228,15 +260,24 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
         />
         <div className="mt-4">
           <ConfigField
-            field={{ key: 'name', label: '显示名称', placeholder: 'AD/LDAP', required: true }}
+            field={{ key: 'name', label: '显示名称', placeholder: meta.name, required: true }}
             value={name}
             disabled={!canManage}
             onChange={value => setName(String(value ?? ''))}
           />
         </div>
+        {isWecom ? (
+          <div className="mt-4">
+            <WecomModeSelect
+              value={wecomMode}
+              disabled={!canManage}
+              onChange={mode => setForm(current => ({ ...current, mode }))}
+            />
+          </div>
+        ) : null}
         <div className="mt-4 space-y-3">
           <SectionTitle title="必填配置" />
-          {meta.requiredFields.map(field => (
+          {requiredFields.map(field => (
             <ConfigField
               key={field.key}
               field={field}
@@ -247,9 +288,18 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
             />
           ))}
         </div>
+        {isWecom && wecomMode === 'direct' ? (
+          <div className="mt-4">
+            <WecomLoginModeSelect
+              value={String(form.loginMode ?? 'qr')}
+              disabled={!canManage}
+              onChange={value => setForm(current => ({ ...current, loginMode: value }))}
+            />
+          </div>
+        ) : null}
         <div className="mt-5 space-y-3">
           <SectionTitle title="可选配置" />
-          {meta.optionalFields.map(field => (
+          {optionalFields.map(field => (
             <ConfigField
               key={field.key}
               field={field}
@@ -260,8 +310,78 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
             />
           ))}
         </div>
+        {isWecom ? (
+          <p className="mt-5 text-xs leading-5" style={{ color: 'var(--zl-text-muted)' }}>
+            企业微信账号按 userid 与平台同名用户匹配登录；账号不存在或已禁用时将提示未绑定。
+          </p>
+        ) : null}
       </SettingsDetailPanel>
     </SettingsSplitLayout>
+  );
+}
+
+function WecomModeSelect({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: WecomMode;
+  disabled?: boolean;
+  onChange: (value: WecomMode) => void;
+}) {
+  return (
+    <label className="block space-y-1.5 text-xs" style={{ color: 'var(--zl-text-muted)' }}>
+      <span>接入模式</span>
+      <Select
+        value={value}
+        disabled={disabled}
+        onValueChange={value => onChange(normalizeWecomMode(value))}
+      >
+        <SelectTrigger className="h-9 rounded-lg px-3 font-normal">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="direct" className="font-normal">
+            {WECOM_MODE_LABELS.direct}
+          </SelectItem>
+          <SelectItem value="center" className="font-normal">
+            {WECOM_MODE_LABELS.center}
+          </SelectItem>
+        </SelectContent>
+      </Select>
+      <span className="block text-[11px] leading-4">
+        切换模式并保存后，另一模式遗留的凭据会被自动清理
+      </span>
+    </label>
+  );
+}
+
+function WecomLoginModeSelect({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block space-y-1.5 text-xs" style={{ color: 'var(--zl-text-muted)' }}>
+      <span>授权方式</span>
+      <Select value={value} disabled={disabled} onValueChange={onChange}>
+        <SelectTrigger className="h-9 rounded-lg px-3 font-normal">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="qr" className="font-normal">
+            PC 浏览器扫码登录
+          </SelectItem>
+          <SelectItem value="inside" className="font-normal">
+            企业微信内打开（网页授权）
+          </SelectItem>
+        </SelectContent>
+      </Select>
+    </label>
   );
 }
 
@@ -271,7 +391,7 @@ function AuthProviderCard({
   enabled,
   onClick,
 }: {
-  meta: (typeof authProviderMeta)[AuthProviderId];
+  meta: AuthProviderMeta;
   active: boolean;
   enabled: boolean;
   onClick: () => void;
@@ -308,7 +428,7 @@ function AuthProviderCard({
           className="mt-1 line-clamp-2 text-xs leading-5"
           style={{ color: 'var(--zl-text-muted)' }}
         >
-          {meta.description}
+          {typeof meta.description === 'function' ? meta.description({}) : meta.description}
         </p>
       </div>
     </button>
@@ -359,22 +479,23 @@ function prepareAuthConfig(
   form: Record<string, unknown>,
   enabled: boolean
 ): { config: Record<string, unknown>; error: string } {
+  if (id === 'wecom') {
+    return prepareWecomConfig(form, enabled);
+  }
   const next = { ...form };
   if (!enabled)
     return { config: removeEmptyConfigValues(removeSecretPresenceMarkers(next)), error: '' };
-  if (id === 'ldap') {
-    if (Boolean(next.useTLS) && Boolean(next.startTLS))
-      return { config: {}, error: 'LDAPS 与 StartTLS 不能同时启用' };
-    const missing = authProviderMeta[id].requiredFields.find(field => {
-      if (field.type === 'number') return !Number(next[field.key]);
-      if (field.type === 'password' && secretConfigured(field, next)) return false;
-      return !String(next[field.key] ?? '').trim();
-    });
-    if (missing) return { config: {}, error: `${missing.label}不能为空` };
-    const port = parsePort(next.port);
-    if (!port) return { config: {}, error: '端口需为 1 到 65535 之间的整数' };
-    next.port = port;
-  }
+  if (Boolean(next.useTLS) && Boolean(next.startTLS))
+    return { config: {}, error: 'LDAPS 与 StartTLS 不能同时启用' };
+  const missing = ldapRequiredFields.find(field => {
+    if (field.type === 'number') return !Number(next[field.key]);
+    if (field.type === 'password' && secretConfigured(field, next)) return false;
+    return !String(next[field.key] ?? '').trim();
+  });
+  if (missing) return { config: {}, error: `${missing.label}不能为空` };
+  const port = parsePort(next.port);
+  if (!port) return { config: {}, error: '端口需为 1 到 65535 之间的整数' };
+  next.port = port;
   return { config: removeEmptyConfigValues(removeSecretPresenceMarkers(next)), error: '' };
 }
 

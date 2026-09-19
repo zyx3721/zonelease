@@ -313,7 +313,7 @@ const docTemplate = `{
         },
         "/api/auth/providers": {
             "get": {
-                "description": "无需登录，登录页用于读取已启用的本地或 AD/LDAP 认证方式。",
+                "description": "无需登录，登录页用于读取已启用的本地、AD/LDAP 或企业微信认证方式。",
                 "produces": [
                     "application/json"
                 ],
@@ -326,6 +326,130 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/router.publicAuthProviderListResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/wecom/authorize": {
+            "get": {
+                "description": "无需登录。企业微信认证启用后，302 跳转到企业微信授权页（直连模式，携带防伪 state）或统一认证中心登录页（认证中心模式）；未启用时返回 404，配置不完整时返回 503。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "发起企业微信登录",
+                "responses": {
+                    "302": {
+                        "description": "授权跳转地址",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/wecom/callback": {
+            "get": {
+                "description": "无需登录。直连模式校验防伪 state 后用 code 换取企业微信用户身份；认证中心模式用 ticket 调用统一认证中心 /api/verify 换取身份。匹配到同名平台用户后建立会话并签发一次性登录票据，302 重定向回前端登录页；未匹配用户时携带 wecomError=user_not_provisioned 回跳。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "企业微信登录回调",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "直连模式：企业微信授权码",
+                        "name": "code",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "直连模式：防伪 state",
+                        "name": "state",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "认证中心模式：一次性登录票据",
+                        "name": "ticket",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "回跳前端登录页",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/wecom/exchange": {
+            "post": {
+                "description": "无需登录。前端从登录页 URL 获取一次性 wecomTicket 后调用本接口换取正式会话；票据取出即删，60 秒有效。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "交换企业微信登录票据",
+                "parameters": [
+                    {
+                        "description": "登录票据",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/router.wecomExchangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/router.loginResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
                         }
                     }
                 }
@@ -2262,7 +2386,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "当前支持 AD/LDAP 目录认证配置，启用后登录页显示对应认证方式。",
+                "description": "当前支持 AD/LDAP 目录认证与企业微信认证（直连或统一认证中心），启用后登录页显示对应认证方式。",
                 "produces": [
                     "application/json"
                 ],
@@ -2305,7 +2429,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "当前仅支持 ldap；绑定密码留空且已有配置时保留原值。",
+                "description": "支持 ldap 与 wecom；ldap 绑定密码、wecom 的应用 Secret 和应用对接密钥留空且已有配置时保留原值。",
                 "consumes": [
                     "application/json"
                 ],
@@ -2319,7 +2443,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "认证配置 ID，当前为 ldap",
+                        "description": "认证配置 ID，当前为 ldap 或 wecom",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -2381,7 +2505,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "当前仅支持 ldap，返回 LDAP 搜索匹配用户数量。",
+                "description": "ldap 返回 LDAP 搜索匹配用户数量；wecom 直连模式验证企业微信应用凭据，认证中心模式检查认证中心健康状态，返回 mode 与 detail。",
                 "produces": [
                     "application/json"
                 ],
@@ -2392,7 +2516,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "认证配置 ID，当前为 ldap",
+                        "description": "认证配置 ID，当前为 ldap 或 wecom",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -5261,6 +5385,14 @@ const docTemplate = `{
             "properties": {
                 "channels": {},
                 "verificationToken": {
+                    "type": "string"
+                }
+            }
+        },
+        "router.wecomExchangeRequest": {
+            "type": "object",
+            "properties": {
+                "ticket": {
                     "type": "string"
                 }
             }

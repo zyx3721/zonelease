@@ -111,6 +111,12 @@ type authProviderTestResponse struct {
 	MatchedUsers int    `json:"matchedUsers"`
 }
 
+type wecomAuthProviderTestResponse struct {
+	Status string `json:"status"`
+	Mode   string `json:"mode"`
+	Detail string `json:"detail"`
+}
+
 type templatePreviewResponse = notify.TemplatePreview
 
 type stateResponse = domain.State

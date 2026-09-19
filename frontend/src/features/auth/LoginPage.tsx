@@ -1,5 +1,5 @@
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Eye, EyeOff, Loader2, Lock, Moon, Sun, User } from 'lucide-react';
+import { Eye, EyeOff, Loader2, Lock, MessageSquareText, Moon, Sun, User } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { AppTooltip } from '@/components/app-tooltip';
@@ -12,11 +12,13 @@ import {
 } from '@/components/ui/select';
 import { useBaseConfig } from '@/lib/branding';
 import {
+  exchangeWecomTicket,
   fetchCurrentUser,
   fetchPublicAuthProviders,
   getAuthToken,
   login,
   persistUser,
+  wecomErrorMessage,
   type PublicAuthProvider,
 } from '@/lib/auth';
 import {
@@ -35,9 +37,12 @@ export function LoginPage() {
   const [providers, setProviders] = useState<PublicAuthProvider[]>([]);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [wecomBusy, setWecomBusy] = useState(false);
   const [error, setError] = useState('');
   const [theme, setTheme] = useState<ZlTheme>(getInitialZlTheme);
   const baseConfig = useBaseConfig();
+  const passwordProviders = providers.filter(item => item.type !== 'wecom');
+  const wecomProvider = providers.find(item => item.type === 'wecom');
   const toggleLabel = theme === 'dark' ? '切换浅色背景' : '切换深色背景';
 
   useEffect(() => {
@@ -66,6 +71,31 @@ export function LoginPage() {
       .then(response => setProviders(response.items))
       .catch(() => setProviders([]));
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ticket = params.get('wecomTicket');
+    const errorCode = params.get('wecomError');
+    if (!ticket && !errorCode) return;
+    params.delete('wecomTicket');
+    params.delete('wecomError');
+    const rest = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
+    if (errorCode) {
+      setError(wecomErrorMessage(errorCode));
+      return;
+    }
+    setWecomBusy(true);
+    exchangeWecomTicket(ticket ?? '')
+      .then(session => {
+        toast.success(`欢迎回来，${session.user.displayName || session.user.username}`);
+        void navigate({ to: '/', replace: true });
+      })
+      .catch(err => {
+        setError(err instanceof Error ? err.message : '企业微信登录失败，请稍后重试');
+      })
+      .finally(() => setWecomBusy(false));
+  }, [navigate]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -171,10 +201,10 @@ export function LoginPage() {
             </div>
 
             <form className="space-y-5" onSubmit={handleSubmit} noValidate>
-              {providers.length > 0 ? (
+              {passwordProviders.length > 0 ? (
                 <LoginProviderSelect
                   value={provider}
-                  providers={providers}
+                  providers={passwordProviders}
                   onChange={setProvider}
                 />
               ) : null}
@@ -268,7 +298,7 @@ export function LoginPage() {
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || wecomBusy}
                 className="zl-login-submit flex h-12 w-full items-center justify-center gap-2 rounded-2xl text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-60"
                 style={{
                   background: 'linear-gradient(135deg, #2563eb, #06b6d4)',
@@ -279,6 +309,37 @@ export function LoginPage() {
                 {loading ? <Loader2 size={17} className="zl-spinner" /> : null}
                 {loading ? '登录中...' : '登录'}
               </button>
+
+              {wecomProvider ? (
+                <div className="space-y-4">
+                  <div
+                    className="flex items-center gap-3 text-xs"
+                    style={{ color: 'var(--zl-text-muted)' }}
+                  >
+                    <span className="h-px flex-1" style={{ background: 'var(--zl-border)' }} />
+                    或
+                    <span className="h-px flex-1" style={{ background: 'var(--zl-border)' }} />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={loading || wecomBusy}
+                    onClick={() => window.location.assign('/api/auth/wecom/authorize')}
+                    className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                    style={{
+                      background: 'linear-gradient(135deg, #07c160, #10b981)',
+                      color: '#fff',
+                      boxShadow: '0 18px 48px rgba(7,193,96,0.28)',
+                    }}
+                  >
+                    {wecomBusy ? (
+                      <Loader2 size={17} className="zl-spinner" />
+                    ) : (
+                      <MessageSquareText size={17} />
+                    )}
+                    {wecomBusy ? '登录中...' : `企业微信登录`}
+                  </button>
+                </div>
+              ) : null}
             </form>
           </div>
         </section>
