@@ -249,7 +249,7 @@ export function ConfigField({
             <AppTooltip label={passwordVisible ? '隐藏密码' : '显示密码'} placement="top">
               <button
                 type="button"
-                disabled={disabled || textValue === ''}
+                disabled={disabled}
                 className="zl-action-button absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md disabled:cursor-not-allowed disabled:opacity-50"
                 style={{ color: 'var(--zl-text-muted)', background: 'transparent' }}
                 onClick={event => {
