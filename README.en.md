@@ -146,11 +146,11 @@ The frontend runs on `http://localhost:5173` and proxies `/api` to the backend.
 
 Open `http://localhost:5173`, sign in with `admin / 123456`, and **change the password right away**. Swagger is at `http://127.0.0.1:8080/swagger/index.html`.
 
-Windows servers also need an agent deployed before anything can be collected or changed — see [chapter 5 of the full manual](docs/README.md) (Chinese).
+Windows servers also need an agent deployed before anything can be collected or changed — see [chapter 5 of the full manual](docs/manual.md) (Chinese).
 
 ## Deployment
 
-Two paths only: **Docker deployment** (recommended) and **build from source**. Historical step-by-step details live in the [full manual](docs/README.md).
+Two paths only: **Docker deployment** (recommended) and **Release binaries**. Building from source and running under systemd directly are covered in the [full manual](docs/manual.md) (Chinese).
 
 ### Option 1: Docker
 
@@ -164,7 +164,7 @@ docker compose up -d
 
 Compose creates `zonelease-postgres`, `zonelease-redis` and `zonelease` containers; the app image is `registry.cn-shenzhen.aliyuncs.com/zyx3721/zonelease:latest` (also published to Docker Hub as `zyx3721/zonelease`).
 
-Key environment variables (full list in [chapter 6.8 of the manual](docs/README.md)):
+Key environment variables (full list in [chapter 6.8 of the manual](docs/manual.md)):
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -194,11 +194,142 @@ docker pull registry.cn-shenzhen.aliyuncs.com/zyx3721/zonelease:latest
 - API docs: `http://your-host/swagger/index.html`
 - Health check: `http://your-host/api/health`
 
-**Last step**: deploy `dns-agent` / `dhcp-agent` on each Windows Server (legacy PowerShell scripts for old systems), then register them under "Agent management". See [chapter 5 of the manual](docs/README.md).
+**Last step**: deploy `dns-agent` / `dhcp-agent` on each Windows Server (legacy PowerShell scripts for old systems), then register them under "Agent management". See [chapter 5 of the manual](docs/manual.md).
 
-### Option 2: Build from source
+### Option 2: Release binaries
 
-The full process — building the backend and frontend, systemd units, host Nginx (HTTP/HTTPS) and Windows agent deployment — is documented in chapters 2–5 of the [full manual](docs/README.md).
+Grab the matching archives from [GitHub Releases](https://github.com/zyx3721/zonelease/releases), then verify, extract, configure and start.
+
+**Which package to download**
+
+| Purpose | File |
+| --- | --- |
+| Backend (Linux x86_64) | `zonelease_<version>_linux_amd64.tar.gz` |
+| Backend (Linux ARM64) | `zonelease_<version>_linux_arm64.tar.gz` |
+| Frontend (required on any platform) | `zonelease-frontend_<version>.tar.gz` |
+| DNS agent (Windows x86_64 / ARM64) | `zonelease-dns-agent_<version>_windows_amd64.zip` / `zonelease-dns-agent_<version>_windows_arm64.zip` |
+| DHCP agent (Windows x86_64 / ARM64) | `zonelease-dhcp-agent_<version>_windows_amd64.zip` / `zonelease-dhcp-agent_<version>_windows_arm64.zip` |
+| Checksums | `zonelease-xxx_<version>_checksums.txt` |
+
+The backend archive contains the `zonelease` binary, `.env.example` and a `README.txt`; the frontend archive contains the Nitro SSR `.output` artifacts. The backend binary has no external runtime dependencies; the frontend SSR requires Node.js on the target machine. Windows agents still need to be deployed on each server — see [chapter 5 of the manual](docs/manual.md).
+
+**1. Verify the download**
+
+```bash
+VERSION=1.0.1
+mkdir -p /data/zonelease && cd /data/zonelease
+sha256sum -c zonelease-frontend_${VERSION}_checksums.txt
+```
+
+**2. Extract**
+
+```bash
+mkdir -p backend frontend/.output
+tar -xzf zonelease_${VERSION}_linux_amd64.tar.gz -C backend --strip-components=1
+tar -xzf zonelease-frontend_${VERSION}.tar.gz -C frontend/.output
+```
+
+Resulting layout:
+
+```text
+/data/zonelease/
+├── backend/
+│   ├── zonelease          # backend binary
+│   ├── .env.example
+│   └── data/              # created on first start
+└── frontend/
+    └── .output/
+        ├── public/        # browser static assets
+        └── server/
+            └── index.mjs  # Nitro SSR entry
+```
+
+**3. Configure and start the backend**
+
+```bash
+cd /data/zonelease/backend
+cp .env.example .env
+vim .env               # at minimum set JWT_SECRET
+./zonelease
+```
+
+The backend listens on `127.0.0.1:8080` by default, runs migrations on first start and creates the default admin `admin / 123456`. For a persistent service, use systemd:
+
+```ini
+# /etc/systemd/system/zonelease-backend.service
+[Unit]
+Description=ZoneLease Backend
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=simple
+WorkingDirectory=/data/zonelease/backend
+ExecStart=/data/zonelease/backend/zonelease
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload && systemctl enable --now zonelease-backend
+```
+
+**4. Start the frontend SSR**
+
+```bash
+cd /data/zonelease/frontend
+HOST=127.0.0.1 PORT=5173 node .output/server/index.mjs
+```
+
+**5. Put Nginx in front**
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    # /assets/ is the frontend build asset prefix; only take over by extension
+    location ~* ^/assets/.+\.(js|mjs|css|map|json|svg|png|jpe?g|gif|webp|ico|woff2?|ttf)$ {
+        root /data/zonelease/frontend/.output/public;
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location /swagger/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:5173;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+The frontend must be served by `node .output/server/index.mjs`; **pointing Nginx only at `.output/public` breaks server-side rendering**. A full example with HTTPS and 80→443 redirect lives in [chapter 4.4 of the manual](docs/manual.md).
+
+**6. Deploy Windows agents and sign in**
+
+Extract the matching DNS / DHCP agent zips on each Windows Server, configure the API key and collection settings, start them, then register under "Agent management". See [chapter 5 of the manual](docs/manual.md).
+
+Access is the same as Docker: console `http://your-domain.com` (`admin / 123456`), API docs at `/swagger/index.html`, health check at `/api/health`.
+
 
 ## Permission model
 
@@ -229,7 +360,7 @@ By module:
 - **Agent authentication** — configure `X-API-Key` on Windows agents and store matching keys per server in the console; legacy agents support API keys too.
 - **Credential redaction** — LDAP bind password, WeCom secret / app secret and SMTP password are stored server-side; API responses only carry "configured" markers.
 - **Audit boundaries** — pre-validation failures (bad request, auth failure) are not audited; successful changes always are.
-- **Tighten access** — terminate HTTPS at Nginx and restrict source IPs in production; full examples in [chapter 4.4 of the manual](docs/README.md).
+- **Tighten access** — terminate HTTPS at Nginx and restrict source IPs in production; full examples in [chapter 4.4 of the manual](docs/manual.md).
 
 ## API docs
 
@@ -250,7 +381,7 @@ Login request example:
 }
 ```
 
-The full endpoint list grouped by module (auth, password reset, DNS, DHCP, events, health, notifications, settings, refresh, servers, state, agent API) lives in [chapter 10 of the manual](docs/README.md) (Chinese).
+The full endpoint list grouped by module (auth, password reset, DNS, DHCP, events, health, notifications, settings, refresh, servers, state, agent API) lives in [chapter 10 of the manual](docs/manual.md) (Chinese).
 
 After changing endpoints, regenerate the Swagger artifacts in `backend/`:
 
@@ -338,7 +469,7 @@ zonelease/
 | [Quick start](#quick-start) | Local backend + frontend, default credentials and ports |
 | [Deployment](#deployment) | Docker and source builds, environment variables, agent deployment |
 | [Permission model](#permission-model) | How the 20 permissions group, built-in roles |
-| [Full manual](docs/README.md) | Complete endpoint list, step-by-step deployment, Nginx/HTTPS examples, troubleshooting (Chinese) |
+| [Full manual](docs/manual.md) | Complete endpoint list, step-by-step deployment, Nginx/HTTPS examples, troubleshooting (Chinese) |
 | [中文 README](README.md) | Same content in Chinese |
 
 ## Releases

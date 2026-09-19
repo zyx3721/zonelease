@@ -146,11 +146,11 @@ npm run dev
 
 打开 `http://localhost:5173`，使用 `admin / 123456` 登录，**登录后立刻改密码**。Swagger 在 `http://127.0.0.1:8080/swagger/index.html`。
 
-Windows 服务器侧还需部署 Agent 才能采集与变更，详见 [《完整手册》第五章](docs/README.md)。
+Windows 服务器侧还需部署 Agent 才能采集与变更，详见 [《完整手册》第五章](docs/manual.md)。
 
 ## 部署
 
-只保留两种方式：**Docker 部署**（推荐）与 **源码编译部署**。历史版本的逐步操作细节见 [《完整手册》](docs/README.md)。
+只保留两种方式：**Docker 部署**（推荐）与 **Release 二进制部署**。源码编译与 systemd 直跑的完整过程见 [《完整手册》](docs/manual.md)。
 
 ### 方式一：Docker 部署
 
@@ -164,7 +164,7 @@ docker compose up -d
 
 Compose 会创建 `zonelease-postgres`、`zonelease-redis` 与 `zonelease` 三个容器，应用镜像为 `registry.cn-shenzhen.aliyuncs.com/zyx3721/zonelease:latest`（Docker Hub 同步发布 `zyx3721/zonelease`）。
 
-核心环境变量（完整清单见 [《完整手册》6.8 节](docs/README.md)）：
+核心环境变量（完整清单见 [《完整手册》6.8 节](docs/manual.md)）：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -194,11 +194,142 @@ docker pull registry.cn-shenzhen.aliyuncs.com/zyx3721/zonelease:latest
 - 接口文档：`http://your-host/swagger/index.html`
 - 健康检查：`http://your-host/api/health`
 
-**最后一步**：在各台 Windows Server 上部署 `dns-agent` / `dhcp-agent`（legacy 系统用对应 PowerShell 脚本），再到控制台「Agent 管理」登记。步骤见 [《完整手册》第五章](docs/README.md)。
+**最后一步**：在各台 Windows Server 上部署 `dns-agent` / `dhcp-agent`（legacy 系统用对应 PowerShell 脚本），再到控制台「Agent 管理」登记。步骤见 [《完整手册》第五章](docs/manual.md)。
 
-### 方式二：源码编译部署
+### 方式二：Release 二进制部署
 
-前后端源码编译、systemd 常驻、宿主机 Nginx 收口（HTTP/HTTPS）与 Windows Agent 部署的完整过程见 [《完整手册》](docs/README.md) 第二、三、四、五章。
+前往 [GitHub Releases](https://github.com/zyx3721/zonelease/releases) 页面，按自己的操作系统与 CPU 架构下载对应压缩包，再按下面步骤校验、解压、配置、启动。
+
+**下载哪个包**
+
+| 用途 | 下载文件 |
+| --- | --- |
+| 后端服务（Linux x86_64） | `zonelease_<版本>_linux_amd64.tar.gz` |
+| 后端服务（Linux ARM64，鲲鹏、飞腾等） | `zonelease_<版本>_linux_arm64.tar.gz` |
+| 前端界面（以上任意平台都需要） | `zonelease-frontend_<版本>.tar.gz` |
+| DNS Agent（Windows x86_64 / ARM64） | `zonelease-dns-agent_<版本>_windows_amd64.zip` / `zonelease-dns-agent_<版本>_windows_arm64.zip` |
+| DHCP Agent（Windows x86_64 / ARM64） | `zonelease-dhcp-agent_<版本>_windows_amd64.zip` / `zonelease-dhcp-agent_<版本>_windows_arm64.zip` |
+| 校验和 | `zonelease-xxx_<版本>_checksums.txt` |
+
+后端包内是 `zonelease` 可执行文件、`.env.example` 与 `README.txt`；前端包内是 Nitro SSR 的 `.output` 产物。二进制无外部运行时依赖，下载后可直接运行；前端 SSR 需要目标机器上安装 Node.js。Windows Agent 还需在对应服务器上部署，步骤见 [《完整手册》第五章](docs/manual.md)。
+
+**1. 校验下载**
+
+```bash
+VERSION=1.0.1
+mkdir -p /data/zonelease && cd /data/zonelease
+sha256sum -c zonelease-frontend_${VERSION}_checksums.txt
+```
+
+**2. 解压**
+
+```bash
+mkdir -p backend frontend/.output
+tar -xzf zonelease_${VERSION}_linux_amd64.tar.gz -C backend --strip-components=1
+tar -xzf zonelease-frontend_${VERSION}.tar.gz -C frontend/.output
+```
+
+得到的目录结构：
+
+```text
+/data/zonelease/
+├── backend/
+│   ├── zonelease          # 后端二进制
+│   ├── .env.example
+│   └── data/              # 首次启动后生成
+└── frontend/
+    └── .output/
+        ├── public/        # 浏览器静态资源
+        └── server/
+            └── index.mjs  # Nitro SSR 入口
+```
+
+**3. 配置并启动后端**
+
+```bash
+cd /data/zonelease/backend
+cp .env.example .env
+vim .env               # 至少设置 JWT_SECRET
+./zonelease
+```
+
+后端默认监听 `127.0.0.1:8080`，首次启动自动执行迁移并创建默认管理员 `admin / 123456`。需要常驻时交给 systemd：
+
+```ini
+# /etc/systemd/system/zonelease-backend.service
+[Unit]
+Description=ZoneLease Backend
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=simple
+WorkingDirectory=/data/zonelease/backend
+ExecStart=/data/zonelease/backend/zonelease
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload && systemctl enable --now zonelease-backend
+```
+
+**4. 启动前端 SSR**
+
+```bash
+cd /data/zonelease/frontend
+HOST=127.0.0.1 PORT=5173 node .output/server/index.mjs
+```
+
+**5. 用 Nginx 收口**
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    # /assets/ 是前端构建产物路由前缀，仅按扩展名接管静态资源
+    location ~* ^/assets/.+\.(js|mjs|css|map|json|svg|png|jpe?g|gif|webp|ico|woff2?|ttf)$ {
+        root /data/zonelease/frontend/.output/public;
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location /swagger/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:5173;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+前端必须经 `node .output/server/index.mjs` 提供 SSR；**只把 `.output/public` 配成静态根目录会导致服务端渲染页面无法返回**。含 HTTPS 与 80→443 跳转的完整示例见 [《完整手册》4.4 节](docs/manual.md)。
+
+**6. 部署 Windows Agent 并访问**
+
+把对应架构的 DNS / DHCP Agent zip 解压到各 Windows Server，配置 API Key 与采集参数后启动，再到控制台「Agent 管理」登记。步骤见 [《完整手册》第五章](docs/manual.md)。
+
+访问同 Docker 方式：控制台 `http://your-domain.com`（`admin / 123456`）、接口文档 `/swagger/index.html`、健康检查 `/api/health`。
+
 
 ## 权限模型
 
@@ -229,7 +360,7 @@ docker pull registry.cn-shenzhen.aliyuncs.com/zyx3721/zonelease:latest
 - **Agent 鉴权** — Windows Agent 建议配置 `X-API-Key`，控制台侧按服务器保存；legacy Agent 同样支持 API Key。
 - **凭据脱敏** — LDAP 绑定密码、企微应用 Secret / 应用对接密钥、SMTP 密码落库保存，接口回显只返回「已配置」标记。
 - **审计边界** — 请求格式错误、认证失败等前置失败不写审计，避免污染操作记录；成功变更全量落审计。
-- **收紧访问** — 生产环境通过 Nginx 配置 HTTPS 并限制来源 IP；完整示例见 [《完整手册》4.4 节](docs/README.md)。
+- **收紧访问** — 生产环境通过 Nginx 配置 HTTPS 并限制来源 IP；完整示例见 [《完整手册》4.4 节](docs/manual.md)。
 
 ## API 文档
 
@@ -250,7 +381,7 @@ docker pull registry.cn-shenzhen.aliyuncs.com/zyx3721/zonelease:latest
 }
 ```
 
-按模块分组的完整接口清单（认证、找回密码、DNS、DHCP、实时事件、健康检查、通知中心、系统配置、刷新、服务器、状态、Agent API）见 [《完整手册》十、API 文档](docs/README.md)。
+按模块分组的完整接口清单（认证、找回密码、DNS、DHCP、实时事件、健康检查、通知中心、系统配置、刷新、服务器、状态、Agent API）见 [《完整手册》十、API 文档](docs/manual.md)。
 
 修改接口后，在 `backend/` 目录执行以下命令同步 Swagger 产物：
 
@@ -294,7 +425,7 @@ PostgreSQL 数据库，默认由后端首次启动自动执行 `migrations/001_i
 
 检查 Windows 服务器上 Agent 进程与端口连通性、`X-API-Key` 是否与登记一致、`DNS_AGENT_POWERSHELL_TIMEOUT_SECONDS` 等配置；2008/2008 R2 需使用 `dns-agent/legacy/`、`dhcp-agent/legacy/` 下的兼容脚本。
 
-其余问题见 [《完整手册》九、常见问题](docs/README.md)。
+其余问题见 [《完整手册》九、常见问题](docs/manual.md)。
 
 ## 项目结构
 
@@ -340,7 +471,7 @@ zonelease/
 | [快速开始](#快速开始) | 本地起后端与前端，默认账号与端口 |
 | [部署](#部署) | Docker 与源码编译两条路径、环境变量、Agent 部署 |
 | [权限模型](#权限模型) | 20 项权限怎么分组、内置角色各有什么 |
-| [完整手册](docs/README.md) | 全量接口清单、逐步部署与 Nginx/HTTPS 示例、使用说明与排障 |
+| [完整手册](docs/manual.md) | 全量接口清单、逐步部署与 Nginx/HTTPS 示例、使用说明与排障 |
 | [English README](README.en.md) | 同样的内容，英文版 |
 
 ## 版本历史
