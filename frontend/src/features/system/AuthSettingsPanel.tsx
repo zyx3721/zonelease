@@ -20,7 +20,6 @@ import {
   normalizeWecomMode,
   prepareWecomConfig,
   wecomRequiredFields,
-  wecomTestSuccessMessage,
   WECOM_CENTER_GUIDANCE,
   WECOM_DIRECT_GUIDANCE,
   WECOM_MODE_OPTIONS,
@@ -177,11 +176,7 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
     setBusy('test');
     try {
       const result = await testAuthProvider(selected);
-      if (selected === 'wecom') {
-        toast.success(wecomTestSuccessMessage(result.detail));
-      } else {
-        toast.success(`认证连接测试通过，成功匹配 ${result.matchedUsers ?? 0} 个用户`);
-      }
+      toast.success(`认证连接测试通过，成功匹配 ${result.matchedUsers ?? 0} 个用户`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '认证连接测试失败');
     } finally {
@@ -249,14 +244,16 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
                 disabled={busy !== '' && busy !== 'save'}
                 onClick={save}
               />
-              <ActionButton
-                icon={<CheckCircle2 size={14} />}
-                label="测试"
-                tone="success"
-                busy={busy === 'test'}
-                disabled={busy !== '' || !enabled}
-                onClick={test}
-              />
+              {!isWecom ? (
+                <ActionButton
+                  icon={<CheckCircle2 size={14} />}
+                  label="测试"
+                  tone="success"
+                  busy={busy === 'test'}
+                  disabled={busy !== '' || !enabled}
+                  onClick={test}
+                />
+              ) : null}
             </>
           ) : null
         }

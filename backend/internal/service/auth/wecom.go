@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -52,19 +51,11 @@ type WecomIdentity struct {
 	Name   string
 }
 
-// WecomTestResult 认证配置测试结果。
-type WecomTestResult struct {
-	Mode   string
-	Detail string
-}
-
 type WecomClient interface {
 	// Exchange 用直连 code 或认证中心 ticket 换取企业微信用户身份。
 	Exchange(ctx context.Context, credential string) (WecomIdentity, error)
 	// AuthorizeURL 拼接授权跳转地址；redirectURI 仅直连模式使用。
 	AuthorizeURL(redirectURI, state string) string
-	// Ping 校验配置连通性，供测试接口使用。
-	Ping(ctx context.Context) (WecomTestResult, error)
 }
 
 func NewWecomClient(provider domain.AuthProvider) (WecomClient, WecomConfig, error) {
@@ -81,41 +72,6 @@ func NewWecomClient(provider domain.AuthProvider) (WecomClient, WecomConfig, err
 		httpc: &http.Client{Timeout: 10 * time.Second},
 		now:   time.Now,
 	}, cfg, nil
-}
-
-func TestWecomProvider(ctx context.Context, provider domain.AuthProvider) (WecomTestResult, error) {
-	client, _, err := NewWecomClient(provider)
-	if err != nil {
-		return WecomTestResult{}, err
-	}
-	return client.Ping(ctx)
-}
-
-func WecomTestMessage(err error) string {
-	if err == nil {
-		return ""
-	}
-	message := strings.ToLower(err.Error())
-	if strings.Contains(message, "connection refused") {
-		return "连接被拒绝，请检查服务地址和端口"
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return "连接超时，请检查服务地址、端口和网络连通性"
-	}
-	if strings.Contains(message, "no such host") {
-		return "域名无法解析，请检查服务地址"
-	}
-	if strings.Contains(message, "certificate") {
-		return "TLS 证书校验失败，请检查认证中心证书配置"
-	}
-	if strings.Contains(message, "errcode=40001") || strings.Contains(message, "invalid credential") {
-		return "企业微信 CorpID 或应用 Secret 不正确"
-	}
-	if strings.Contains(message, "errcode=60020") {
-		return "企业微信应用未配置可信 IP，请将本服务器出口 IP 加入应用可信 IP 列表"
-	}
-	return "认证服务连接测试失败：" + err.Error()
 }
 
 func decodeWecomConfig(data []byte) (WecomConfig, error) {
@@ -231,13 +187,6 @@ func (c *WecomDirectClient) AuthorizeURL(redirectURI, state string) string {
 	return wecomQRLogin + "?" + query.Encode()
 }
 
-func (c *WecomDirectClient) Ping(ctx context.Context) (WecomTestResult, error) {
-	if _, err := c.token(ctx); err != nil {
-		return WecomTestResult{}, err
-	}
-	return WecomTestResult{Mode: WecomModeDirect, Detail: "企业微信应用凭据验证通过"}, nil
-}
-
 func (c *WecomDirectClient) getJSON(ctx context.Context, endpoint string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -307,23 +256,6 @@ func (c *WecomCenterClient) AuthorizeURL(redirectURI, state string) string {
 	query := url.Values{}
 	query.Set("app", c.cfg.AppID)
 	return c.cfg.AuthCenterURL + "/login?" + query.Encode()
-}
-
-func (c *WecomCenterClient) Ping(ctx context.Context) (WecomTestResult, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.AuthCenterURL+"/healthz", nil)
-	if err != nil {
-		return WecomTestResult{}, err
-	}
-	httpResp, err := c.httpc.Do(req)
-	if err != nil {
-		return WecomTestResult{}, err
-	}
-	defer httpResp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(httpResp.Body, 64))
-	if httpResp.StatusCode != http.StatusOK || strings.TrimSpace(string(body)) != "ok" {
-		return WecomTestResult{}, fmt.Errorf("auth center healthz http %d", httpResp.StatusCode)
-	}
-	return WecomTestResult{Mode: WecomModeCenter, Detail: "统一认证中心连接正常"}, nil
 }
 
 // SignWecomTicket 统一认证中心 verify 签名算法：

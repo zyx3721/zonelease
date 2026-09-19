@@ -661,11 +661,11 @@ func swaggerUpdateAuthProvider() {}
 
 // swaggerTestAuthProvider godoc
 // @Summary 测试认证配置
-// @Description ldap 返回 LDAP 搜索匹配用户数量；wecom 直连模式验证企业微信应用凭据，认证中心模式检查认证中心健康状态，返回 mode 与 detail。
+// @Description 当前仅支持 ldap，返回 LDAP 搜索匹配用户数量。
 // @Tags Settings
 // @Produce json
 // @Security BearerAuth
-// @Param id path string true "认证配置 ID，当前为 ldap 或 wecom"
+// @Param id path string true "认证配置 ID，当前为 ldap"
 // @Success 200 {object} authProviderTestResponse
 // @Failure 401 {object} errorDocResponse
 // @Failure 403 {object} errorDocResponse

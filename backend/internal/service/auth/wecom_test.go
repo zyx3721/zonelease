@@ -167,22 +167,6 @@ func TestWecomCenterClientAuthorizeURL(t *testing.T) {
 	}
 }
 
-func TestWecomCenterClientPingChecksHealthz(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/healthz" {
-			http.NotFound(w, r)
-			return
-		}
-		_, _ = w.Write([]byte("ok"))
-	}))
-	defer server.Close()
-
-	client := &WecomCenterClient{cfg: WecomConfig{Mode: WecomModeCenter, AuthCenterURL: server.URL, AppID: "zonelease", AppSecret: "s"}, httpc: server.Client()}
-	if _, err := client.Ping(context.Background()); err != nil {
-		t.Fatalf("Ping returned error: %v", err)
-	}
-}
-
 func TestLoginTicketStoreOneTimeAndExpiry(t *testing.T) {
 	store := newLoginTicketStore()
 	now := time.Now()

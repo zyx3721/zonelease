@@ -106,16 +106,6 @@ func (r *Router) testAuthProvider(w http.ResponseWriter, req *http.Request, id s
 		writeError(w, http.StatusInternalServerError, "get_auth_provider_failed", "读取认证配置失败")
 		return
 	}
-	if provider.Type == "wecom" {
-		result, err := authsvc.TestWecomProvider(req.Context(), provider)
-		if err != nil {
-			writeError(w, http.StatusServiceUnavailable, "auth_provider_test_failed", authsvc.WecomTestMessage(err))
-			return
-		}
-		r.writeAudit(req, "settings.auth_provider.test", id, "System", "success", map[string]any{"provider": id, "mode": result.Mode})
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "mode": result.Mode, "detail": result.Detail})
-		return
-	}
 	result, err := authsvc.TestLDAPProvider(req.Context(), provider)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "auth_provider_test_failed", authsvc.LDAPUserMessage(err))

@@ -193,7 +193,7 @@ export function updateAuthProvider(
 }
 
 export function testAuthProvider(id: string) {
-  return api<{ status: string; matchedUsers?: number; mode?: string; detail?: string }>(
+  return api<{ status: string; matchedUsers: number }>(
     `/api/settings/auth-providers/${encodeURIComponent(id)}/test`,
     { method: 'POST' }
   );

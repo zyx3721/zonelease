@@ -2,11 +2,6 @@ import type { SettingsField } from './settings-primitives';
 
 export type WecomMode = 'direct' | 'center';
 
-export const WECOM_MODE_LABELS: Record<WecomMode, string> = {
-  direct: '直连企业微信',
-  center: '统一认证中心',
-};
-
 export const WECOM_MODE_OPTIONS: Array<{ value: WecomMode; label: string; description: string }> = [
   { value: 'direct', label: '直连企业微信', description: '本系统直接持有企微应用凭据并完成扫码' },
   {
@@ -132,6 +127,3 @@ function removeEmpty(config: Record<string, unknown>) {
   );
 }
 
-export function wecomTestSuccessMessage(detail?: string) {
-  return detail ? `企业微信认证测试通过：${detail}` : '企业微信认证测试通过';
-}
