@@ -344,6 +344,14 @@ func (s *Store) replaceGroupRoles(ctx context.Context, groupID string, roleKeys 
 }
 
 func (s *Store) attachAccessToUsers(ctx context.Context, users []domain.User) ([]domain.User, error) {
+	userIDs := make([]string, len(users))
+	for index := range users {
+		userIDs[index] = users[index].ID
+	}
+	wecomBound, err := s.wecomBoundFlags(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
 	for index := range users {
 		directRoles, err := s.listUserDirectRoles(ctx, users[index].ID)
 		if err != nil {
@@ -356,6 +364,7 @@ func (s *Store) attachAccessToUsers(ctx context.Context, users []domain.User) ([
 		users[index].DirectRoles = directRoles
 		users[index].Roles = roles
 		users[index].Permissions = uniquePermissions(roles)
+		users[index].WecomBound = wecomBound[users[index].ID]
 	}
 	return users, nil
 }

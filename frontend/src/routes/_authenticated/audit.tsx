@@ -1007,7 +1007,11 @@ function taskTargetParts(type: string, payload?: Record<string, unknown>) {
       return {
         type: 'server',
         id: payload
-          ? stringField(payload, 'serverName') || resourceName || resourceId || stringField(payload, 'serverId') || '-'
+          ? stringField(payload, 'serverName') ||
+            resourceName ||
+            resourceId ||
+            stringField(payload, 'serverId') ||
+            '-'
           : resourceName || resourceId || '-',
       };
     }
@@ -1023,11 +1027,16 @@ function taskTargetParts(type: string, payload?: Record<string, unknown>) {
         id: resourceName || resourceId || '-',
       };
     }
-    return { type: prefixedResourceType(resourceType, payload), id: resourceName || resourceId || '-' };
+    return {
+      type: prefixedResourceType(resourceType, payload),
+      id: resourceName || resourceId || '-',
+    };
   }
   return {
     type: payload ? stringField(payload, 'resourceType') || type || '-' : type || '-',
-    id: payload ? stringField(payload, 'resourceName') || stringField(payload, 'resourceId') || '-' : '-',
+    id: payload
+      ? stringField(payload, 'resourceName') || stringField(payload, 'resourceId') || '-'
+      : '-',
   };
 }
 
@@ -1134,10 +1143,12 @@ function extraPayload(detail: NonNullable<DetailItem>) {
   const value = detail.type === 'tasks' ? detail.item.payload : detail.item.detail;
   const parsed = detail.type === 'audit' ? sanitizedAuditDetail(value) : parsePayload(value);
   if (!parsed) return null;
-  const normalized = detail.type === 'tasks' ? normalizedTaskPayload(detail.item.type, parsed) : parsed;
+  const normalized =
+    detail.type === 'tasks' ? normalizedTaskPayload(detail.item.type, parsed) : parsed;
   return {
     title: detail.type === 'tasks' ? '任务载荷' : '审计元数据',
-    value: typeof normalized === 'object' ? JSON.stringify(normalized, null, 2) : String(normalized),
+    value:
+      typeof normalized === 'object' ? JSON.stringify(normalized, null, 2) : String(normalized),
   };
 }
 
@@ -1221,14 +1232,7 @@ function sanitizedAuditDetail(value: unknown) {
 
 function orderedAuditDetail(detail: Record<string, unknown>) {
   const ordered: Record<string, unknown> = {};
-  const priority = [
-    'zoneId',
-    'zoneName',
-    'scopeId',
-    'scopeName',
-    'serverId',
-    'serverName',
-  ];
+  const priority = ['zoneId', 'zoneName', 'scopeId', 'scopeName', 'serverId', 'serverName'];
   for (const key of priority) {
     if (Object.prototype.hasOwnProperty.call(detail, key)) {
       ordered[key] = detail[key];
@@ -1312,6 +1316,8 @@ function normalizedAuditAction(action: string) {
     {
       'User login': 'auth.login',
       'User logout': 'auth.logout',
+      'Bound wecom': 'auth.wecom.bind',
+      'Unbound wecom': 'auth.wecom.unbind',
       'Changed password': 'auth.password.change',
       'Queued refresh': 'runtime.refresh',
       'Created server': 'server.create',

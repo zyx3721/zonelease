@@ -16,6 +16,7 @@ type User struct {
 	Roles       []Role     `json:"roles,omitempty"`
 	DirectRoles []Role     `json:"directRoles"`
 	Disabled    bool       `json:"disabled"`
+	WecomBound  bool       `json:"wecomBound"`
 	LastLoginAt *time.Time `json:"lastLoginAt,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
@@ -117,6 +118,7 @@ type SystemBaseConfig struct {
 	AgentFullSyncTimeoutSeconds      int     `json:"agentFullSyncTimeoutSeconds"`
 	AgentHealthCheckIntervalMinutes  int     `json:"agentHealthCheckIntervalMinutes"`
 	AgentHealthCheckConcurrency      int     `json:"agentHealthCheckConcurrency"`
+	WecomStateTtlMinutes             int     `json:"wecomStateTtlMinutes"`
 }
 
 func DefaultSystemBaseConfig() SystemBaseConfig {
@@ -140,6 +142,7 @@ func DefaultSystemBaseConfig() SystemBaseConfig {
 		AgentFullSyncTimeoutSeconds:      300,
 		AgentHealthCheckIntervalMinutes:  1,
 		AgentHealthCheckConcurrency:      1,
+		WecomStateTtlMinutes:             5,
 	}
 }
 
@@ -191,6 +194,9 @@ func NormalizeSystemBaseConfig(item SystemBaseConfig) SystemBaseConfig {
 	}
 	if item.AgentHealthCheckConcurrency <= 0 {
 		item.AgentHealthCheckConcurrency = defaults.AgentHealthCheckConcurrency
+	}
+	if item.WecomStateTtlMinutes <= 0 || item.WecomStateTtlMinutes > 60 {
+		item.WecomStateTtlMinutes = defaults.WecomStateTtlMinutes
 	}
 	return item
 }

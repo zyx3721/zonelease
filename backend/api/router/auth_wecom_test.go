@@ -1,8 +1,8 @@
 package router
 
 import (
+	"context"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 )
@@ -10,35 +10,51 @@ import (
 func TestWecomStateRoundTrip(t *testing.T) {
 	router := &Router{}
 	router.cfg.Auth.SessionSecret = "test-secret"
-	state, err := router.signWecomState()
+	ctx := context.Background()
+	state, err := router.signWecomState(wecomStatePurposeLogin, "", ctx)
 	if err != nil {
 		t.Fatalf("signWecomState returned error: %v", err)
 	}
-	if status := verifyWecomState(state, "test-secret"); status != wecomStateValid {
-		t.Fatalf("verifyWecomState = %v, want valid", status)
+	claims, status := verifyWecomStateAt(state, "test-secret", time.Now())
+	if status != wecomStateValid {
+		t.Fatalf("verifyWecomStateAt = %v, want valid", status)
 	}
-	if status := verifyWecomState(state, "other-secret"); status != wecomStateInvalid {
-		t.Fatalf("verifyWecomState with wrong secret = %v, want invalid", status)
+	if claims.Purpose != wecomStatePurposeLogin || claims.Nonce == "" {
+		t.Fatalf("claims = %+v, want login purpose with nonce", claims)
 	}
-	if status := verifyWecomState(state+".tampered", "test-secret"); status != wecomStateInvalid {
-		t.Fatalf("verifyWecomState with tampered state = %v, want invalid", status)
+
+	bindState, err := router.signWecomState(wecomStatePurposeBind, "user-1", ctx)
+	if err != nil {
+		t.Fatalf("signWecomState returned error: %v", err)
 	}
-	if status := verifyWecomState("", "test-secret"); status != wecomStateInvalid {
-		t.Fatalf("verifyWecomState with empty state = %v, want invalid", status)
+	bindClaims, status := verifyWecomStateAt(bindState, "test-secret", time.Now())
+	if status != wecomStateValid || bindClaims.UserID != "user-1" || bindClaims.Purpose != wecomStatePurposeBind {
+		t.Fatalf("bind claims = (%+v, %v), want bind purpose for user-1", bindClaims, status)
+	}
+
+	if _, status := verifyWecomStateAt(state, "other-secret", time.Now()); status != wecomStateInvalid {
+		t.Fatalf("verifyWecomStateAt with wrong secret = %v, want invalid", status)
+	}
+	if _, status := verifyWecomStateAt(state+".tampered", "test-secret", time.Now()); status != wecomStateInvalid {
+		t.Fatalf("verifyWecomStateAt with tampered state = %v, want invalid", status)
+	}
+	if _, status := verifyWecomStateAt("", "test-secret", time.Now()); status != wecomStateInvalid {
+		t.Fatalf("verifyWecomStateAt with empty state = %v, want invalid", status)
 	}
 }
 
 func TestWecomStateExpiry(t *testing.T) {
 	router := &Router{}
 	router.cfg.Auth.SessionSecret = "test-secret"
-	state, err := router.signWecomState()
+	state, err := router.signWecomState(wecomStatePurposeLogin, "", context.Background())
 	if err != nil {
 		t.Fatalf("signWecomState returned error: %v", err)
 	}
-	if status := verifyWecomStateAt(state, "test-secret", time.Now().Add(wecomStateTTL+time.Minute)); status != wecomStateExpired {
+	ttl := router.wecomStateTTL(context.Background())
+	if _, status := verifyWecomStateAt(state, "test-secret", time.Now().Add(ttl+time.Minute)); status != wecomStateExpired {
 		t.Fatalf("verifyWecomStateAt after ttl = %v, want expired", status)
 	}
-	if status := verifyWecomStateAt(state, "test-secret", time.Now().Add(wecomStateTTL-time.Minute)); status != wecomStateValid {
+	if _, status := verifyWecomStateAt(state, "test-secret", time.Now().Add(ttl-time.Minute)); status != wecomStateValid {
 		t.Fatalf("verifyWecomStateAt before ttl = %v, want valid", status)
 	}
 }
@@ -85,7 +101,7 @@ func TestSanitizeWecomConfigDirectRequiresCredentials(t *testing.T) {
 		map[string]any{"mode": "direct", "corpId": "ww1", "agentId": float64(1)},
 		map[string]any{},
 		true,
-	); err == nil || !strings.Contains(err.Error(), "应用 Secret 不能为空") {
+	); err == nil || err.Error() != "应用 Secret 不能为空" {
 		t.Fatalf("missing secret error = %v, want 应用 Secret 不能为空", err)
 	}
 }
@@ -120,7 +136,7 @@ func TestSanitizeWecomConfigCenterRequiresCredentials(t *testing.T) {
 		map[string]any{"mode": "center", "authCenterUrl": "https://auth.example.com", "appId": "zonelease"},
 		map[string]any{},
 		true,
-	); err == nil || !strings.Contains(err.Error(), "应用对接密钥不能为空") {
+	); err == nil || err.Error() != "应用对接密钥不能为空" {
 		t.Fatalf("missing appSecret error = %v, want 应用对接密钥不能为空", err)
 	}
 }

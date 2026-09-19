@@ -117,6 +117,9 @@ func validateBaseConfig(item domain.SystemBaseConfig) error {
 	if item.AgentHealthCheckConcurrency < 1 || item.AgentHealthCheckConcurrency > 20 {
 		return fmt.Errorf("Agent 自动检查并发需在 1 到 20 个之间")
 	}
+	if item.WecomStateTtlMinutes < 1 || item.WecomStateTtlMinutes > 60 {
+		return fmt.Errorf("企业微信扫码有效期需在 1 到 60 分钟之间")
+	}
 	return nil
 }
 

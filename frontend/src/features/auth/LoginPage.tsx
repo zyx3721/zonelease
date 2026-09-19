@@ -12,12 +12,16 @@ import {
 } from '@/components/ui/select';
 import { useBaseConfig } from '@/lib/branding';
 import {
+  WECOM_BIND_RESULT_EVENT,
   exchangeWecomTicket,
   fetchCurrentUser,
   fetchPublicAuthProviders,
   getAuthToken,
   login,
+  loginByWecomCenterTicket,
   persistUser,
+  wecomBindByCode,
+  wecomBindByTicket,
   wecomErrorMessage,
   type PublicAuthProvider,
 } from '@/lib/auth';
@@ -52,7 +56,7 @@ export function LoginPage() {
 
   useEffect(() => {
     let cancelled = false;
-    if (getAuthToken()) {
+    if (getAuthToken() && !hasWecomCallbackParams()) {
       void fetchCurrentUser()
         .then(user => {
           if (cancelled) return;
@@ -74,19 +78,58 @@ export function LoginPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const ticket = params.get('wecomTicket');
+    const loginTicket = params.get('wecomTicket');
+    const centerTicket = params.get('ticket');
+    const code = params.get('code');
+    const state = params.get('state');
     const errorCode = params.get('wecomError');
-    if (!ticket && !errorCode) return;
-    params.delete('wecomTicket');
-    params.delete('wecomError');
+    if (!loginTicket && !centerTicket && !errorCode && !(code && state)) return;
+    // 一次性读取并清除回调参数，防止刷新或后退时重放
+    for (const key of ['wecomTicket', 'ticket', 'code', 'state', 'wecomError']) {
+      params.delete(key);
+    }
     const rest = params.toString();
     window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
     if (errorCode) {
       setError(wecomErrorMessage(errorCode));
       return;
     }
+    // 已登录（绑定弹窗场景）：绑定后 postMessage 通知主窗口并自动关窗
+    if (getAuthToken() && ((code && state) || centerTicket)) {
+      setWecomBusy(true);
+      const bindRequest =
+        code && state ? wecomBindByCode({ code, state }) : wecomBindByTicket(centerTicket ?? '');
+      bindRequest
+        .then(binding => {
+          window.opener?.postMessage(
+            { type: WECOM_BIND_RESULT_EVENT, ok: true, wecomUserid: binding.wecomUserid },
+            window.location.origin
+          );
+          toast.success('企业微信绑定成功');
+          void fetchCurrentUser({ force: true }).then(user => persistUser(user));
+          window.setTimeout(() => window.close(), 300);
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : '企业微信绑定失败，请稍后重试';
+          window.opener?.postMessage(
+            { type: WECOM_BIND_RESULT_EVENT, ok: false, message },
+            window.location.origin
+          );
+          setError(message);
+          if (window.opener) {
+            // 失败也自动关窗，具体原因由主窗口 toast 展示；稍作停留便于目视确认
+            window.setTimeout(() => window.close(), 1500);
+          }
+        })
+        .finally(() => setWecomBusy(false));
+      return;
+    }
+    // 未登录：登录流程
     setWecomBusy(true);
-    exchangeWecomTicket(ticket ?? '')
+    const loginRequest = loginTicket
+      ? exchangeWecomTicket(loginTicket)
+      : loginByWecomCenterTicket(centerTicket ?? '');
+    loginRequest
       .then(session => {
         toast.success(`欢迎回来，${session.user.displayName || session.user.username}`);
         void navigate({ to: '/', replace: true });
@@ -96,6 +139,28 @@ export function LoginPage() {
       })
       .finally(() => setWecomBusy(false));
   }, [navigate]);
+
+  useEffect(() => {
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      if (hasWecomCallbackParams()) {
+        window.location.replace('/login');
+        return;
+      }
+      setWecomBusy(false);
+      setLoading(false);
+    };
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
+  }, []);
+
+  function startWecomLogin() {
+    setWecomBusy(true);
+    setError('');
+    window.location.assign('/api/auth/wecom/authorize');
+    // 后端失败时会 302 回登录页；超时未跳转时恢复按钮状态兜底
+    window.setTimeout(() => setWecomBusy(false), 4000);
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -323,7 +388,7 @@ export function LoginPage() {
                   <button
                     type="button"
                     disabled={loading || wecomBusy}
-                    onClick={() => window.location.assign('/api/auth/wecom/authorize')}
+                    onClick={startWecomLogin}
                     className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-60"
                     style={{
                       background: 'linear-gradient(135deg, #07c160, #10b981)',
@@ -348,6 +413,17 @@ export function LoginPage() {
         </p>
       </section>
     </main>
+  );
+}
+
+function hasWecomCallbackParams() {
+  if (typeof window === 'undefined') return false;
+  const params = new URLSearchParams(window.location.search);
+  return Boolean(
+    params.get('wecomTicket') ||
+    params.get('ticket') ||
+    params.get('wecomError') ||
+    (params.get('code') && params.get('state'))
   );
 }
 

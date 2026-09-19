@@ -21,6 +21,7 @@ export const defaultBaseConfig: SystemBaseConfig = {
   agentFullSyncTimeoutSeconds: 300,
   agentHealthCheckIntervalMinutes: 1,
   agentHealthCheckConcurrency: 1,
+  wecomStateTtlMinutes: 5,
 };
 
 let cachedBaseConfig = defaultBaseConfig;
@@ -147,6 +148,10 @@ export function normalizeBaseConfig(config: Partial<SystemBaseConfig>): SystemBa
     agentHealthCheckConcurrency: numberValue(
       config.agentHealthCheckConcurrency,
       defaultBaseConfig.agentHealthCheckConcurrency
+    ),
+    wecomStateTtlMinutes: numberValue(
+      config.wecomStateTtlMinutes,
+      defaultBaseConfig.wecomStateTtlMinutes
     ),
   };
 }

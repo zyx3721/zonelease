@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"zonelease/backend/internal/domain"
-	"zonelease/backend/internal/repository"
 )
 
 func domainUserForTest(username string) domain.User {
@@ -247,10 +246,10 @@ func TestLoginTicketStoreOneTimeAndExpiry(t *testing.T) {
 	}
 }
 
-func TestLoginByWecomProvisionsMatchingUser(t *testing.T) {
-	store := &passwordResetStore{user: domainUserForTest("zhangsan")}
+func TestLoginByWecomRequiresBinding(t *testing.T) {
+	store := &passwordResetStore{user: domainUserForTest("zhangsan"), wecomBound: true}
 	service := New(store, Config{SessionSecret: "test-secret"})
-	session, err := service.LoginByWecom(context.Background(), "wecom", WecomIdentity{Userid: "zhangsan", Name: "张三"})
+	session, err := service.LoginByWecom(context.Background(), "wecom", WecomIdentity{Userid: "wecom-zhangsan", Name: "张三"})
 	if err != nil {
 		t.Fatalf("LoginByWecom returned error: %v", err)
 	}
@@ -259,21 +258,46 @@ func TestLoginByWecomProvisionsMatchingUser(t *testing.T) {
 	}
 }
 
-func TestLoginByWecomRejectsUnprovisionedUser(t *testing.T) {
-	store := &passwordResetStore{findUserErr: repository.ErrNotFound}
+func TestLoginByWecomRejectsUnboundAccount(t *testing.T) {
+	store := &passwordResetStore{user: domainUserForTest("zhangsan")}
 	service := New(store, Config{SessionSecret: "test-secret"})
-	if _, err := service.LoginByWecom(context.Background(), "wecom", WecomIdentity{Userid: "nobody"}); !errors.Is(err, ErrUserNotProvisioned) {
-		t.Fatalf("LoginByWecom error = %v, want ErrUserNotProvisioned", err)
+	if _, err := service.LoginByWecom(context.Background(), "wecom", WecomIdentity{Userid: "nobody"}); !errors.Is(err, ErrWecomNotBound) {
+		t.Fatalf("LoginByWecom error = %v, want ErrWecomNotBound", err)
 	}
 }
 
 func TestLoginByWecomRejectsDisabledUser(t *testing.T) {
 	user := domainUserForTest("zhangsan")
 	user.Disabled = true
-	store := &passwordResetStore{user: user}
+	store := &passwordResetStore{user: user, wecomBound: true}
 	service := New(store, Config{SessionSecret: "test-secret"})
 	if _, err := service.LoginByWecom(context.Background(), "wecom", WecomIdentity{Userid: "zhangsan"}); !errors.Is(err, ErrUserNotProvisioned) {
 		t.Fatalf("LoginByWecom error = %v, want ErrUserNotProvisioned", err)
+	}
+}
+
+func TestBindWecomConflictsWithOtherOwner(t *testing.T) {
+	store := &passwordResetStore{user: domainUserForTest("lisi"), wecomBound: true}
+	service := New(store, Config{SessionSecret: "test-secret"})
+	if _, err := service.BindWecom(context.Background(), "user-admin", "wecom-lisi"); !errors.Is(err, ErrWecomConflict) {
+		t.Fatalf("BindWecom error = %v, want ErrWecomConflict", err)
+	}
+	bound, err := service.BindWecom(context.Background(), "user-lisi", "wecom-lisi")
+	if err != nil || bound != "wecom-lisi" {
+		t.Fatalf("BindWecom = (%q, %v), want own binding to succeed", bound, err)
+	}
+}
+
+func TestUnbindWecomReportsRemoval(t *testing.T) {
+	store := &passwordResetStore{user: domainUserForTest("zhangsan"), wecomBound: true}
+	service := New(store, Config{SessionSecret: "test-secret"})
+	removed, err := service.UnbindWecom(context.Background(), "user-zhangsan")
+	if err != nil || !removed {
+		t.Fatalf("UnbindWecom = (%v, %v), want removed", removed, err)
+	}
+	removed, err = service.UnbindWecom(context.Background(), "user-zhangsan")
+	if err != nil || removed {
+		t.Fatalf("second UnbindWecom = (%v, %v), want idempotent false", removed, err)
 	}
 }
 

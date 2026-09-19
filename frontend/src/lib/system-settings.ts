@@ -25,6 +25,7 @@ export type SystemBaseConfig = {
   agentFullSyncTimeoutSeconds: number;
   agentHealthCheckIntervalMinutes: number;
   agentHealthCheckConcurrency: number;
+  wecomStateTtlMinutes: number;
 };
 
 export type NotificationChannel = {

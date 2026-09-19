@@ -333,7 +333,7 @@ const docTemplate = `{
         },
         "/api/auth/wecom/authorize": {
             "get": {
-                "description": "无需登录。企业微信认证启用后，302 跳转到企业微信授权页（直连模式，携带防伪 state）或统一认证中心登录页（认证中心模式）；未启用时返回 404，配置不完整时返回 503。",
+                "description": "无需登录。企业微信认证启用后，302 跳转到企业微信授权页（直连模式，携带防伪 state，有效期取基础配置的企业微信扫码有效期）或统一认证中心登录页（认证中心模式）；未启用或配置不完整时同样 302 回前端登录页并携带 wecomError。",
                 "produces": [
                     "application/json"
                 ],
@@ -346,6 +346,112 @@ const docTemplate = `{
                         "description": "授权跳转地址",
                         "schema": {
                             "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/wecom/bind": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "直连模式提交 code 与绑定 state；统一认证中心模式提交 ticket。绑定成功返回 wecomUserid；该企微账号已绑定其他用户返回 409。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "绑定企业微信",
+                "parameters": [
+                    {
+                        "description": "绑定参数",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/router.wecomBindRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/router.wecomBindingResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/wecom/bind-url": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "为当前登录用户签发绑定用扫码地址；直连模式 state 携带绑定用途与用户 ID 并回跳前端登录页，统一认证中心模式返回认证中心登录页。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "获取企业微信绑定授权地址",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/router.wecomAuthorizeURLResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
                         }
                     },
                     "404": {
@@ -448,6 +554,89 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/wecom/login": {
+            "post": {
+                "description": "无需登录。认证中心回调路径配置为前端登录页时，前端持认证中心 ticket 调用本接口换取会话；仅统一认证中心模式可用，账号未绑定时返回 user_not_bound。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "企业微信统一认证中心票据登录",
+                "parameters": [
+                    {
+                        "description": "认证中心 ticket",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/router.wecomExchangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/router.loginResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/wecom/unbind": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "解除当前用户的企业微信账号绑定；未绑定时幂等返回 bound=false。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "解绑企业微信",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/router.wecomBindingResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/router.errorDocResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/router.errorDocResponse"
                         }
@@ -4157,6 +4346,9 @@ const docTemplate = `{
                 },
                 "username": {
                     "type": "string"
+                },
+                "wecomBound": {
+                    "type": "boolean"
                 }
             }
         },
@@ -4670,6 +4862,9 @@ const docTemplate = `{
                 },
                 "username": {
                     "type": "string"
+                },
+                "wecomBound": {
+                    "type": "boolean"
                 }
             }
         },
@@ -5143,6 +5338,9 @@ const docTemplate = `{
                 },
                 "username": {
                     "type": "string"
+                },
+                "wecomBound": {
+                    "type": "boolean"
                 }
             }
         },
@@ -5385,6 +5583,39 @@ const docTemplate = `{
             "properties": {
                 "channels": {},
                 "verificationToken": {
+                    "type": "string"
+                }
+            }
+        },
+        "router.wecomAuthorizeURLResponse": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "router.wecomBindRequest": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                },
+                "ticket": {
+                    "type": "string"
+                }
+            }
+        },
+        "router.wecomBindingResponse": {
+            "type": "object",
+            "properties": {
+                "bound": {
+                    "type": "boolean"
+                },
+                "wecomUserid": {
                     "type": "string"
                 }
             }

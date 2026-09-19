@@ -7,6 +7,7 @@ import {
   updateAuthProvider,
   type AuthProvider,
 } from '@/lib/system-settings';
+import { emitWecomProvidersChanged } from '@/lib/auth';
 import {
   normalizeWecomMode,
   prepareWecomConfig,
@@ -53,8 +54,7 @@ const authProviderMeta: Record<AuthProviderId, AuthProviderMeta> = {
   },
   wecom: {
     name: '企业微信',
-    description: form =>
-      wecomDescription(normalizeWecomMode(form.mode)),
+    description: form => wecomDescription(normalizeWecomMode(form.mode)),
     icon: QrCode,
     color: '#07c160',
   },
@@ -120,7 +120,11 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
     const provider = providers[selected];
     setEnabled(provider?.enabled ?? false);
     setName(provider?.name ?? authProviderMeta[selected].name);
-    setForm(normalizeConfig(selected === 'wecom' ? { mode: 'direct', ...provider?.config } : provider?.config));
+    setForm(
+      normalizeConfig(
+        selected === 'wecom' ? { mode: 'direct', ...provider?.config } : provider?.config
+      )
+    );
   }, [providers, selected]);
 
   const cards = useMemo(
@@ -134,7 +138,8 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
   const wecomMode = normalizeWecomMode(form.mode);
   const requiredFields = isWecom ? wecomRequiredFields(wecomMode) : ldapRequiredFields;
   const optionalFields = isWecom ? wecomOptionalFields(wecomMode) : ldapOptionalFields;
-  const description = typeof meta.description === 'function' ? meta.description(form) : meta.description;
+  const description =
+    typeof meta.description === 'function' ? meta.description(form) : meta.description;
 
   async function save() {
     const displayName = name.trim();
@@ -151,6 +156,7 @@ export function AuthSettingsPanel({ canManage = true }: { canManage?: boolean })
     try {
       const saved = await updateAuthProvider(selected, { name: displayName, enabled, config });
       setProviders(current => ({ ...current, [selected]: saved }));
+      emitWecomProvidersChanged();
       toast.success('认证配置已保存');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '保存认证配置失败');

@@ -129,6 +129,7 @@ type passwordResetStore struct {
 	findUserErr              error
 	channelErr               error
 	findUserCalled           bool
+	wecomBound               bool
 	deleteUserSessionsCalled bool
 	deleteUserSessionsUserID string
 }
@@ -140,6 +141,38 @@ func (s *passwordResetStore) FindUserByUsername(context.Context, string) (domain
 
 func (s *passwordResetStore) FindUserByID(context.Context, string) (domain.User, error) {
 	return domain.User{}, repository.ErrNotFound
+}
+
+func (s *passwordResetStore) FindUserByWecomBinding(context.Context, string) (domain.User, error) {
+	if !s.wecomBound {
+		return domain.User{}, repository.ErrNotFound
+	}
+	return s.user, nil
+}
+
+func (s *passwordResetStore) FindWecomBindingOwner(context.Context, string) (string, error) {
+	if !s.wecomBound {
+		return "", repository.ErrNotFound
+	}
+	return s.user.ID, nil
+}
+
+func (s *passwordResetStore) SaveWecomBinding(context.Context, string, string) error {
+	s.wecomBound = true
+	return nil
+}
+
+func (s *passwordResetStore) DeleteWecomBinding(context.Context, string) (bool, error) {
+	bound := s.wecomBound
+	s.wecomBound = false
+	return bound, nil
+}
+
+func (s *passwordResetStore) WecomBindingOfUser(context.Context, string) (string, error) {
+	if !s.wecomBound {
+		return "", repository.ErrNotFound
+	}
+	return "zhangsan", nil
 }
 
 func (s *passwordResetStore) GetAuthProvider(context.Context, string) (domain.AuthProvider, error) {

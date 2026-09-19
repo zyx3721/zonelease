@@ -49,6 +49,11 @@ func (e ResetCodeCooldownError) Is(target error) bool {
 type Store interface {
 	FindUserByUsername(ctx context.Context, username string) (domain.User, string, error)
 	FindUserByID(ctx context.Context, id string) (domain.User, error)
+	FindUserByWecomBinding(ctx context.Context, wecomUserid string) (domain.User, error)
+	FindWecomBindingOwner(ctx context.Context, wecomUserid string) (string, error)
+	SaveWecomBinding(ctx context.Context, userID, wecomUserid string) error
+	DeleteWecomBinding(ctx context.Context, userID string) (bool, error)
+	WecomBindingOfUser(ctx context.Context, userID string) (string, error)
 	GetAuthProvider(ctx context.Context, id string) (domain.AuthProvider, error)
 	RecordUserLogin(ctx context.Context, userID string) error
 	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error

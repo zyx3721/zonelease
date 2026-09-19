@@ -92,6 +92,8 @@ DNS / DHCP 管理操作后的延迟局部刷新只在常规路径下创建任务
 | 后端写入 action | 前端显示 action | 资源列格式 | 主要 detail 字段 |
 | :-: | :-: | :-: | :-: |
 | `User login` | `auth.login` | `user/<username>` | `username`、`provider`；企业微信登录时额外包含 `wecomUserid` |
+| `Bound wecom` | `auth.wecom.bind` | `user/<username>` | `username`、`wecomUserid` |
+| `Unbound wecom` | `auth.wecom.unbind` | `user/<username>` | `username`、`wecomUserid` |
 | `User logout` | `auth.logout` | `user/<username>` | `username`、`provider` |
 | `Changed password` | `auth.password.change` | `user/<username>` | `username` |
 | `Queued refresh` | `runtime.refresh` | `runtime/<taskType>` | `task`、`type` |

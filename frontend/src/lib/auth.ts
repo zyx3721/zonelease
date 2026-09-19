@@ -2,6 +2,13 @@ const TOKEN_KEY = 'zonelease.auth.token';
 const USER_KEY = 'zonelease.auth.user';
 const EXPIRES_AT_KEY = 'zonelease.auth.expires_at';
 export const AUTH_SESSION_CHANGED_EVENT = 'zonelease:auth-session-changed';
+export const WECOM_PROVIDERS_CHANGED_EVENT = 'zonelease:wecom-providers-changed';
+export const WECOM_BIND_RESULT_EVENT = 'zonelease:wecom-bind-result';
+
+export function emitWecomProvidersChanged() {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new Event(WECOM_PROVIDERS_CHANGED_EVENT));
+}
 
 export type AuthUser = {
   id: string;
@@ -10,6 +17,7 @@ export type AuthUser = {
   displayName: string;
   role: string;
   permissions: string[];
+  wecomBound: boolean;
 };
 
 export type AuthSession = {
@@ -183,13 +191,54 @@ export async function exchangeWecomTicket(ticket: string) {
   return session;
 }
 
+export async function loginByWecomCenterTicket(ticket: string) {
+  const session = await api<AuthSession>('/api/auth/wecom/login', {
+    method: 'POST',
+    auth: false,
+    body: JSON.stringify({ ticket }),
+  });
+  persistSession(session);
+  setCurrentUserSnapshot(session.user);
+  return session;
+}
+
+export function fetchWecomBindUrl() {
+  return api<{ url: string }>('/api/auth/wecom/bind-url');
+}
+
+export type WecomBindResult = {
+  bound: boolean;
+  wecomUserid?: string;
+};
+
+export function wecomBindByCode(body: { code: string; state: string }) {
+  return api<WecomBindResult>('/api/auth/wecom/bind', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export function wecomBindByTicket(ticket: string) {
+  return api<WecomBindResult>('/api/auth/wecom/bind', {
+    method: 'POST',
+    body: JSON.stringify({ ticket }),
+  });
+}
+
+export function unbindWecom() {
+  return api<WecomBindResult>('/api/auth/wecom/unbind', { method: 'POST' });
+}
+
 export const WECOM_ERROR_MESSAGES: Record<string, string> = {
   state_invalid: '登录状态校验失败，请重新发起企业微信登录',
   state_expired: '登录已超时，请重新发起企业微信登录',
   wecom_error: '企业微信身份获取失败，请稍后重试',
   center_error: '统一认证中心连接失败，请稍后重试',
-  user_not_provisioned: '该企业微信账号未绑定平台用户，请使用与企微 userid 同名的平台账号或联系管理员',
+  user_not_bound: '该企业微信账号尚未绑定平台用户，请先使用账号密码登录后在用户菜单绑定企业微信',
+  user_not_provisioned: '该用户已被禁用，请联系管理员',
   login_failed: '企业微信登录失败，请稍后重试',
+  wecom_not_enabled: '企业微信登录未启用，请联系管理员',
+  wecom_config_invalid: '企业微信登录配置不完整，请联系管理员',
 };
 
 export function wecomErrorMessage(code: string | null) {
@@ -197,11 +246,15 @@ export function wecomErrorMessage(code: string | null) {
   return WECOM_ERROR_MESSAGES[code] ?? '企业微信登录未完成，请重新发起登录';
 }
 
-export function fetchPublicAuthProviders() {
-  if (cachedPublicAuthProviders && cachedPublicAuthProviders.expiresAt > Date.now()) {
+export function fetchPublicAuthProviders(options: { force?: boolean } = {}) {
+  if (
+    !options.force &&
+    cachedPublicAuthProviders &&
+    cachedPublicAuthProviders.expiresAt > Date.now()
+  ) {
     return Promise.resolve(cachedPublicAuthProviders.value);
   }
-  if (pendingPublicAuthProviders) return pendingPublicAuthProviders;
+  if (pendingPublicAuthProviders && !options.force) return pendingPublicAuthProviders;
   pendingPublicAuthProviders = api<{ items: PublicAuthProvider[]; total: number }>(
     '/api/auth/providers',
     { auth: false }
@@ -219,11 +272,11 @@ export function fetchPublicAuthProviders() {
   return pendingPublicAuthProviders;
 }
 
-export function fetchCurrentUser() {
-  if (cachedCurrentUser && cachedCurrentUser.expiresAt > Date.now()) {
+export function fetchCurrentUser(options: { force?: boolean } = {}) {
+  if (!options.force && cachedCurrentUser && cachedCurrentUser.expiresAt > Date.now()) {
     return Promise.resolve(cachedCurrentUser.user);
   }
-  if (pendingCurrentUser) return pendingCurrentUser;
+  if (pendingCurrentUser && !options.force) return pendingCurrentUser;
   pendingCurrentUser = api<AuthUser>('/api/auth/me')
     .then(user => {
       cachedCurrentUser = { user, expiresAt: Date.now() + CURRENT_USER_CACHE_TTL_MS };

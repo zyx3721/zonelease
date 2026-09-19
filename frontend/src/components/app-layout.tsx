@@ -14,6 +14,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   KeyRound,
+  Link2,
   RefreshCw,
   ScrollText,
   Server,
@@ -22,16 +23,21 @@ import {
   User,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   clearSession,
   AUTH_SESSION_CHANGED_EVENT,
   fetchCurrentUser,
+  fetchPublicAuthProviders,
+  fetchWecomBindUrl,
   getStoredUser,
   getAuthToken,
   logout,
+  unbindWecom,
   userHasAnyPermission,
+  WECOM_BIND_RESULT_EVENT,
+  WECOM_PROVIDERS_CHANGED_EVENT,
 } from '@/lib/auth';
 import { useBaseConfig } from '@/lib/branding';
 import { createRefresh, useDB } from '@/lib/dns-dhcp-store';
@@ -294,9 +300,71 @@ export function AppLayout({ children }: { children?: ReactNode }) {
   const [theme, setTheme] = useState<ZlTheme>(getInitialZlTheme);
   const [user, setUser] = useState(() => getStoredUser());
   const [loggingOut, setLoggingOut] = useState(false);
+  const [wecomEnabled, setWecomEnabled] = useState(false);
   const baseConfig = useBaseConfig();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+
+  const wecomBindAvailable = wecomEnabled && Boolean(user);
+  const refreshWecomEnabled = useCallback(() => {
+    void fetchPublicAuthProviders({ force: true })
+      .then(response =>
+        setWecomEnabled(response.items.some(item => item.enabled && item.type === 'wecom'))
+      )
+      .catch(() => setWecomEnabled(false));
+  }, []);
+
+  useEffect(() => {
+    refreshWecomEnabled();
+    window.addEventListener(WECOM_PROVIDERS_CHANGED_EVENT, refreshWecomEnabled);
+    return () => window.removeEventListener(WECOM_PROVIDERS_CHANGED_EVENT, refreshWecomEnabled);
+  }, [refreshWecomEnabled]);
+
+  useEffect(() => {
+    const handleWecomBindResult = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.data?.type !== WECOM_BIND_RESULT_EVENT) {
+        return;
+      }
+      if (event.data.ok) {
+        toast.success('企业微信绑定成功');
+      } else {
+        toast.error(String(event.data.message || '企业微信绑定失败'));
+      }
+      void fetchCurrentUser({ force: true })
+        .then(fresh => setUser(fresh))
+        .catch(() => undefined);
+    };
+    window.addEventListener('message', handleWecomBindResult);
+    return () => window.removeEventListener('message', handleWecomBindResult);
+  }, []);
+
+  const startWecomBind = async () => {
+    try {
+      const { url } = await fetchWecomBindUrl();
+      const popup = window.open(url, 'zonelease-wecom-bind', 'width=680,height=680');
+      if (!popup) {
+        toast.error('浏览器拦截了绑定窗口，请允许弹窗后重试');
+        return;
+      }
+      setUserMenuOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '获取企业微信绑定地址失败');
+    }
+  };
+
+  const handleUnbindWecom = async () => {
+    setUserMenuOpen(false);
+    try {
+      await unbindWecom();
+      toast.success('已解绑企业微信');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '解绑企业微信失败');
+      return;
+    }
+    void fetchCurrentUser({ force: true })
+      .then(fresh => setUser(fresh))
+      .catch(() => undefined);
+  };
   const [transitioningTo, setTransitioningTo] = useState('');
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -374,9 +442,12 @@ export function AppLayout({ children }: { children?: ReactNode }) {
           const agentKey = agentEvent ? refreshAgentKey(agentEvent) : '';
           if (refreshEvent.status === 'progress' && agentEvent && agentKey) {
             const toastId = manualRefreshAgentToastsRef.current.get(agentKey);
-            const agentFinished = ['completed', 'failed', 'skipped'].includes(agentEvent.status ?? '');
-            const nextOptions =
-              agentFinished ? taskToastDoneOptionsFor(toastId) : taskToastOptionsFor(toastId);
+            const agentFinished = ['completed', 'failed', 'skipped'].includes(
+              agentEvent.status ?? ''
+            );
+            const nextOptions = agentFinished
+              ? taskToastDoneOptionsFor(toastId)
+              : taskToastOptionsFor(toastId);
             const nextToastId =
               agentEvent.status === 'failed'
                 ? toast.error(formatAgentRefreshToast(agentEvent), nextOptions)
@@ -875,9 +946,7 @@ export function AppLayout({ children }: { children?: ReactNode }) {
                     className="zl-action-button relative flex h-[42px] w-[42px] items-center justify-center rounded-lg border"
                     style={{
                       background: 'var(--zl-control-bg)',
-                      borderColor: notificationOpen
-                        ? 'rgba(59,130,246,0.48)'
-                        : 'var(--zl-border)',
+                      borderColor: notificationOpen ? 'rgba(59,130,246,0.48)' : 'var(--zl-border)',
                       color: 'var(--zl-text-muted)',
                     }}
                     aria-label="通知消息"
@@ -973,6 +1042,23 @@ export function AppLayout({ children }: { children?: ReactNode }) {
                     boxShadow: 'var(--zl-menu-shadow)',
                   }}
                 >
+                  {wecomBindAvailable ? (
+                    <button
+                      type="button"
+                      className="zl-action-button zl-menu-action-item flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm"
+                      role="menuitem"
+                      onClick={() => {
+                        if (user?.wecomBound) {
+                          void handleUnbindWecom();
+                        } else {
+                          void startWecomBind();
+                        }
+                      }}
+                    >
+                      <Link2 size={16} />
+                      {user?.wecomBound ? '解绑企微' : '绑定企微'}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="zl-action-button zl-menu-action-item flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm"

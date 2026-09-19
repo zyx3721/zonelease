@@ -413,6 +413,16 @@ function SecurityPanel({
         onChange={value => onUpdate({ resetCaptchaTtlMinutes: value })}
       />
       <NumberControl
+        label="企业微信扫码有效期"
+        description="发起企业微信登录或绑定后，完成扫码的时间上限"
+        unit="分钟"
+        value={form.wecomStateTtlMinutes}
+        min={1}
+        max={60}
+        disabled={disabled}
+        onChange={value => onUpdate({ wecomStateTtlMinutes: value })}
+      />
+      <NumberControl
         label="发送冷却时间"
         description={`验证码发送后 ${form.passwordResetSendCooldownMinutes} 分钟内不可重复请求`}
         unit="分钟"

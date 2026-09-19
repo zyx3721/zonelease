@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -14,36 +15,54 @@ import (
 	"strings"
 	"time"
 
+	"zonelease/backend/internal/domain"
 	"zonelease/backend/internal/repository"
 	authsvc "zonelease/backend/internal/service/auth"
 )
 
 const (
-	wecomProviderID         = "wecom"
-	wecomStateTTL           = 5 * time.Minute
-	wecomStatePurpose       = "zonelease-wecom-login"
-	wecomCallbackPath       = "/api/auth/wecom/callback"
-	wecomMaxRequestBodySize = 4 << 10
+	wecomProviderID        = "wecom"
+	wecomStatePurposeLogin = "login"
+	wecomStatePurposeBind  = "bind"
+	wecomCallbackPath      = "/api/auth/wecom/callback"
+	wecomMaxRequestBodyKB  = 4
 )
 
 type wecomExchangeRequest struct {
 	Ticket string `json:"ticket"`
 }
 
+type wecomBindRequest struct {
+	Code   string `json:"code,omitempty"`
+	State  string `json:"state,omitempty"`
+	Ticket string `json:"ticket,omitempty"`
+}
+
+type wecomAuthorizeURLResponse struct {
+	URL string `json:"url"`
+}
+
+type wecomBindingResponse struct {
+	Bound       bool   `json:"bound"`
+	WecomUserid string `json:"wecomUserid,omitempty"`
+}
+
 // wecomAuthorize GET /api/auth/wecom/authorize
-// 生成授权跳转：直连模式签发防伪 state 后跳企微授权页；统一认证中心模式直接跳认证中心 /login。
+// 登录入口：直连模式签发防伪 state 后跳企微授权页；统一认证中心模式跳认证中心 /login。
+// 未启用或配置不完整时 302 回前端登录页并携带 wecomError，避免浏览器展示裸 JSON 错误。
 func (r *Router) wecomAuthorize(w http.ResponseWriter, req *http.Request) {
 	client, cfg, err := r.enabledWecomClient(req)
 	if err != nil {
-		r.writeWecomSetupError(w, err)
+		r.logger.Warn("Wecom authorize unavailable", "error", err)
+		r.redirectWecomError(w, req, cfg, wecomErrorFromSetup(err))
 		return
 	}
 	var authorizeURL string
 	if cfg.Mode == authsvc.WecomModeDirect {
-		state, err := r.signWecomState()
+		state, err := r.signWecomState(wecomStatePurposeLogin, "", req.Context())
 		if err != nil {
 			r.logger.Error("Sign wecom state failed", "error", err)
-			writeError(w, http.StatusInternalServerError, "wecom_state_failed", "生成登录状态失败")
+			r.redirectWecomError(w, req, cfg, wecomErrorLoginFailed)
 			return
 		}
 		authorizeURL = client.AuthorizeURL(wecomExternalBase(req, cfg.RedirectPrefix)+wecomCallbackPath, state)
@@ -54,13 +73,13 @@ func (r *Router) wecomAuthorize(w http.ResponseWriter, req *http.Request) {
 }
 
 // wecomCallback GET /api/auth/wecom/callback
-// 直连模式校验 state 并用 code 换身份；认证中心模式用 ticket 调 verify 换身份。
+// 直连模式校验 state 并用 code 换身份；认证中心模式（callback_path 配到后端的接法）用 ticket 调 verify 换身份。
 // 成功后建立平台会话并签发一次性登录票据，重定向回前端登录页完成交换。
 func (r *Router) wecomCallback(w http.ResponseWriter, req *http.Request) {
 	client, cfg, err := r.enabledWecomClient(req)
 	if err != nil {
 		r.logger.Warn("Wecom provider unavailable on callback", "error", err)
-		r.redirectWecomError(w, req, cfg, wecomErrorWecomFailed)
+		r.redirectWecomError(w, req, cfg, wecomErrorFromSetup(err))
 		return
 	}
 	identity, err := r.resolveWecomIdentity(req, client, cfg)
@@ -71,6 +90,10 @@ func (r *Router) wecomCallback(w http.ResponseWriter, req *http.Request) {
 	}
 	session, err := r.auth.LoginByWecom(req.Context(), wecomProviderID, identity)
 	if err != nil {
+		if errors.Is(err, authsvc.ErrWecomNotBound) {
+			r.redirectWecomError(w, req, cfg, wecomErrorNotBound)
+			return
+		}
 		if errors.Is(err, authsvc.ErrUserNotProvisioned) {
 			r.redirectWecomError(w, req, cfg, wecomErrorNotProvisioned)
 			return
@@ -93,11 +116,55 @@ func (r *Router) wecomCallback(w http.ResponseWriter, req *http.Request) {
 	http.Redirect(w, req, wecomExternalBase(req, cfg.RedirectPrefix)+"/login?wecomTicket="+url.QueryEscape(ticket), http.StatusFound)
 }
 
+// wecomLogin POST /api/auth/wecom/login
+// 认证中心回调路径配置为前端登录页时，前端持认证中心 ticket 调用本接口直接换取会话。
+func (r *Router) wecomLogin(w http.ResponseWriter, req *http.Request) {
+	client, cfg, err := r.enabledWecomClient(req)
+	if err != nil {
+		r.writeWecomSetupError(w, err)
+		return
+	}
+	if cfg.Mode != authsvc.WecomModeCenter {
+		writeError(w, http.StatusBadRequest, "invalid_mode", "当前并非统一认证中心模式，请使用扫码登录入口")
+		return
+	}
+	var body wecomExchangeRequest
+	if !decodeWithLimit(w, req, &body, wecomMaxRequestBodyKB) {
+		return
+	}
+	identity, err := client.Exchange(req.Context(), body.Ticket)
+	if err != nil {
+		r.logger.Warn("Wecom center ticket login failed", "error", err)
+		writeError(w, http.StatusUnauthorized, "invalid_ticket", wecomBindFailureMessage(err))
+		return
+	}
+	session, err := r.auth.LoginByWecom(req.Context(), wecomProviderID, identity)
+	if err != nil {
+		if errors.Is(err, authsvc.ErrWecomNotBound) {
+			writeError(w, http.StatusUnauthorized, "user_not_bound", "该企业微信账号尚未绑定平台用户，请先登录后在用户菜单绑定企业微信")
+			return
+		}
+		if errors.Is(err, authsvc.ErrUserNotProvisioned) {
+			writeError(w, http.StatusUnauthorized, "user_not_provisioned", "该用户已被禁用，请联系管理员")
+			return
+		}
+		r.logger.Error("Wecom login failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "login_failed", "企业微信登录失败，请稍后重试")
+		return
+	}
+	r.store.WriteAudit(req.Context(), session.User.ID, session.User.Username, "User login", session.User.Username, "System", "success", auditMetadata(map[string]any{
+		"username":    session.User.Username,
+		"provider":    wecomProviderID,
+		"wecomUserid": identity.Userid,
+	}), repository.ClientIP(req))
+	writeJSON(w, http.StatusOK, session)
+}
+
 // wecomExchange POST /api/auth/wecom/exchange
 // 前端持一次性登录票据换取正式会话；票据取出即删，60 秒有效。
 func (r *Router) wecomExchange(w http.ResponseWriter, req *http.Request) {
 	var body wecomExchangeRequest
-	if !decodeWithLimit(w, req, &body, wecomMaxRequestBodySize) {
+	if !decodeWithLimit(w, req, &body, wecomMaxRequestBodyKB) {
 		return
 	}
 	token, ok := r.auth.ConsumeWecomLoginTicket(body.Ticket)
@@ -111,6 +178,111 @@ func (r *Router) wecomExchange(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, session)
+}
+
+// wecomBindURL GET /api/auth/wecom/bind-url
+// 为当前登录用户签发绑定授权地址：直连模式 state 携带用途与用户 ID，回跳前端登录页；认证中心模式返回认证中心登录页。
+func (r *Router) wecomBindURL(w http.ResponseWriter, req *http.Request) {
+	client, cfg, err := r.enabledWecomClient(req)
+	if err != nil {
+		r.writeWecomSetupError(w, err)
+		return
+	}
+	user := currentUser(req)
+	var authorizeURL string
+	if cfg.Mode == authsvc.WecomModeDirect {
+		state, err := r.signWecomState(wecomStatePurposeBind, user.ID, req.Context())
+		if err != nil {
+			r.logger.Error("Sign wecom bind state failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "wecom_state_failed", "生成绑定状态失败")
+			return
+		}
+		authorizeURL = client.AuthorizeURL(wecomExternalBase(req, cfg.RedirectPrefix)+"/login", state)
+	} else {
+		authorizeURL = client.AuthorizeURL("", "")
+	}
+	writeJSON(w, http.StatusOK, wecomAuthorizeURLResponse{URL: authorizeURL})
+}
+
+// wecomBind POST /api/auth/wecom/bind
+// 直连模式校验绑定 state（用途与用户归属）后用 code 换 userid；认证中心模式用 ticket 换 userid。
+// 绑定冲突返回 409，绑定 state 与当前用户不匹配返回 403。
+func (r *Router) wecomBind(w http.ResponseWriter, req *http.Request) {
+	client, cfg, err := r.enabledWecomClient(req)
+	if err != nil {
+		r.writeWecomSetupError(w, err)
+		return
+	}
+	user := currentUser(req)
+	var body wecomBindRequest
+	if !decodeWithLimit(w, req, &body, wecomMaxRequestBodyKB) {
+		return
+	}
+	var identity authsvc.WecomIdentity
+	if cfg.Mode == authsvc.WecomModeDirect {
+		claims, status := verifyWecomStateAt(body.State, r.cfg.Auth.SessionSecret, time.Now())
+		if status != wecomStateValid || claims.Purpose != wecomStatePurposeBind {
+			writeError(w, http.StatusBadRequest, "invalid_state", "绑定状态无效或已过期，请重新发起绑定")
+			return
+		}
+		if claims.UserID != "" && claims.UserID != user.ID {
+			writeError(w, http.StatusForbidden, "state_user_mismatch", "绑定状态与当前用户不匹配，请重新发起绑定")
+			return
+		}
+		identity, err = client.Exchange(req.Context(), body.Code)
+	} else {
+		if strings.TrimSpace(body.Ticket) == "" {
+			writeError(w, http.StatusBadRequest, "invalid_request", "绑定票据不能为空")
+			return
+		}
+		identity, err = client.Exchange(req.Context(), body.Ticket)
+	}
+	if err != nil {
+		r.logger.Warn("Wecom bind identity resolve failed", "error", err)
+		writeError(w, http.StatusBadGateway, "wecom_bind_failed", wecomBindFailureMessage(err))
+		return
+	}
+	bound, err := r.auth.BindWecom(req.Context(), user.ID, identity.Userid)
+	if err != nil {
+		if errors.Is(err, authsvc.ErrWecomConflict) {
+			writeError(w, http.StatusConflict, "wecom_bind_conflict", "该企业微信账号已绑定其他用户")
+			return
+		}
+		r.logger.Error("Wecom bind failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "wecom_bind_failed", "绑定企业微信失败")
+		return
+	}
+	r.writeAudit(req, "Bound wecom", user.Username, "System", "success", map[string]any{
+		"username":    user.Username,
+		"wecomUserid": bound,
+	})
+	writeJSON(w, http.StatusOK, wecomBindingResponse{Bound: true, WecomUserid: bound})
+}
+
+// wecomUnbind POST /api/auth/wecom/unbind
+// 解除当前用户的企业微信绑定；未绑定时幂等返回 bound=false。
+func (r *Router) wecomUnbind(w http.ResponseWriter, req *http.Request) {
+	user := currentUser(req)
+	previousUserid, wasBound, err := r.auth.WecomBindingOf(req.Context(), user.ID)
+	if err != nil {
+		r.logger.Error("Read wecom binding failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "wecom_unbind_failed", "解绑企业微信失败")
+		return
+	}
+	removed, err := r.auth.UnbindWecom(req.Context(), user.ID)
+	if err != nil {
+		r.logger.Error("Wecom unbind failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "wecom_unbind_failed", "解绑企业微信失败")
+		return
+	}
+	if removed {
+		metadata := map[string]any{"username": user.Username}
+		if wasBound {
+			metadata["wecomUserid"] = previousUserid
+		}
+		r.writeAudit(req, "Unbound wecom", user.Username, "System", "success", metadata)
+	}
+	writeJSON(w, http.StatusOK, wecomBindingResponse{Bound: false})
 }
 
 func (r *Router) enabledWecomClient(req *http.Request) (authsvc.WecomClient, authsvc.WecomConfig, error) {
@@ -128,11 +300,15 @@ func (r *Router) resolveWecomIdentity(req *http.Request, client authsvc.WecomCli
 	query := req.URL.Query()
 	if cfg.Mode == authsvc.WecomModeDirect {
 		state := query.Get("state")
-		switch verifyWecomState(state, r.cfg.Auth.SessionSecret) {
+		claims, status := verifyWecomStateAt(state, r.cfg.Auth.SessionSecret, time.Now())
+		switch status {
 		case wecomStateInvalid:
 			return authsvc.WecomIdentity{}, errors.New("wecom state invalid")
 		case wecomStateExpired:
 			return authsvc.WecomIdentity{}, errors.New("wecom state expired")
+		}
+		if claims.Purpose != wecomStatePurposeLogin {
+			return authsvc.WecomIdentity{}, errors.New("wecom state invalid")
 		}
 		return client.Exchange(req.Context(), query.Get("code"))
 	}
@@ -161,9 +337,19 @@ const (
 	wecomErrorExpiredState   = "state_expired"
 	wecomErrorWecomFailed    = "wecom_error"
 	wecomErrorCenterFailed   = "center_error"
+	wecomErrorNotBound       = "user_not_bound"
 	wecomErrorNotProvisioned = "user_not_provisioned"
 	wecomErrorLoginFailed    = "login_failed"
+	wecomErrorNotEnabled     = "wecom_not_enabled"
+	wecomErrorConfigInvalid  = "wecom_config_invalid"
 )
+
+func wecomErrorFromSetup(err error) string {
+	if errors.Is(err, authsvc.ErrWecomNotConfigured) {
+		return wecomErrorNotEnabled
+	}
+	return wecomErrorConfigInvalid
+}
 
 func wecomErrorFromResolve(err error) string {
 	message := strings.ToLower(err.Error())
@@ -176,6 +362,18 @@ func wecomErrorFromResolve(err error) string {
 		return wecomErrorCenterFailed
 	default:
 		return wecomErrorWecomFailed
+	}
+}
+
+func wecomBindFailureMessage(err error) string {
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "state expired"):
+		return "绑定状态已过期，请重新发起绑定"
+	case strings.Contains(message, "auth center"):
+		return "统一认证中心连接失败，请稍后重试"
+	default:
+		return "企业微信身份获取失败，请稍后重试"
 	}
 }
 
@@ -201,22 +399,38 @@ func wecomExternalBase(req *http.Request, prefix string) string {
 	return scheme + "://" + host
 }
 
-// wecomStateClaims 防伪 state 载荷：用途 + 随机数 + 过期时间，JWT_SECRET 签名防伪造。
+// wecomStateClaims 防伪 state 载荷：用途 + 绑定发起用户 + 随机数 + 过期时间，JWT_SECRET 签名防伪造。
 type wecomStateClaims struct {
 	Purpose   string `json:"p"`
+	UserID    string `json:"u,omitempty"`
 	Nonce     string `json:"n"`
 	ExpiresAt int64  `json:"e"`
 }
 
-func (r *Router) signWecomState() (string, error) {
+// wecomStateTTL 读取基础配置中的企业微信扫码有效期，缺省或越界时回落默认值。
+func (r *Router) wecomStateTTL(ctx context.Context) time.Duration {
+	defaults := time.Duration(domain.DefaultSystemBaseConfig().WecomStateTtlMinutes) * time.Minute
+	if r.store == nil {
+		return defaults
+	}
+	config, err := r.store.GetSystemBaseConfig(ctx)
+	if err != nil {
+		return defaults
+	}
+	minutes := domain.NormalizeSystemBaseConfig(config).WecomStateTtlMinutes
+	return time.Duration(minutes) * time.Minute
+}
+
+func (r *Router) signWecomState(purpose, userID string, ctx context.Context) (string, error) {
 	nonce := make([]byte, 16)
 	if _, err := rand.Read(nonce); err != nil {
 		return "", err
 	}
 	claims := wecomStateClaims{
-		Purpose:   wecomStatePurpose,
+		Purpose:   purpose,
+		UserID:    userID,
 		Nonce:     hex.EncodeToString(nonce),
-		ExpiresAt: time.Now().Add(wecomStateTTL).Unix(),
+		ExpiresAt: time.Now().Add(r.wecomStateTTL(ctx)).Unix(),
 	}
 	payload, err := json.Marshal(claims)
 	if err != nil {
@@ -234,33 +448,29 @@ const (
 	wecomStateValid
 )
 
-func verifyWecomState(state, secret string) wecomStateStatus {
-	return verifyWecomStateAt(state, secret, time.Now())
-}
-
-func verifyWecomStateAt(state, secret string, now time.Time) wecomStateStatus {
+func verifyWecomStateAt(state, secret string, now time.Time) (wecomStateClaims, wecomStateStatus) {
+	var claims wecomStateClaims
 	encoded, signature, found := strings.Cut(state, ".")
 	if !found || encoded == "" || signature == "" {
-		return wecomStateInvalid
+		return claims, wecomStateInvalid
 	}
 	if subtle.ConstantTimeCompare([]byte(signature), []byte(wecomStateSignature(secret, encoded))) != 1 {
-		return wecomStateInvalid
+		return claims, wecomStateInvalid
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
-		return wecomStateInvalid
+		return claims, wecomStateInvalid
 	}
-	var claims wecomStateClaims
 	if err := json.Unmarshal(payload, &claims); err != nil {
-		return wecomStateInvalid
+		return wecomStateClaims{}, wecomStateInvalid
 	}
-	if claims.Purpose != wecomStatePurpose || claims.Nonce == "" {
-		return wecomStateInvalid
+	if claims.Purpose == "" || claims.Nonce == "" {
+		return wecomStateClaims{}, wecomStateInvalid
 	}
 	if now.Unix() >= claims.ExpiresAt {
-		return wecomStateExpired
+		return wecomStateClaims{}, wecomStateExpired
 	}
-	return wecomStateValid
+	return claims, wecomStateValid
 }
 
 func wecomStateSignature(secret, encoded string) string {
@@ -269,10 +479,10 @@ func wecomStateSignature(secret, encoded string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// decodeWithLimit 复用 decode 的错误处理约定，但允许覆盖请求体大小上限。
-func decodeWithLimit(w http.ResponseWriter, req *http.Request, dst any, limit int64) bool {
+// decodeWithLimit 复用 decode 的错误处理约定，但以 KB 为单位收紧请求体上限。
+func decodeWithLimit(w http.ResponseWriter, req *http.Request, dst any, limitKB int) bool {
 	defer req.Body.Close()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, req.Body, limit))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, req.Body, int64(limitKB)<<10))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "请求体必须是合法 JSON")
