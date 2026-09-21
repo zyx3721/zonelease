@@ -17,7 +17,7 @@ export function BootScreen() {
         aria-hidden="true"
       />
       <div className="relative z-10 flex flex-col items-center">
-        <img className="zl-boot-icon h-20 w-20" src={config.iconData} alt={config.appName} />
+        <img className="zl-boot-icon h-20 w-20" src={config.iconData} alt={config.siteName} />
         <div
           className="mt-5 flex items-center gap-2 text-sm font-semibold"
           style={{ color: 'var(--zl-accent-text)' }}
@@ -26,7 +26,7 @@ export function BootScreen() {
           <span className="zl-loading-dot" />
           <span className="zl-loading-dot" />
         </div>
-        <p className="zl-gradient-text mt-4 text-xl font-bold tracking-wide">{config.appName}</p>
+        <p className="zl-gradient-text mt-4 text-xl font-bold tracking-wide">{config.siteName}</p>
       </div>
     </div>
   );
