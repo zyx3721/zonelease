@@ -22,6 +22,8 @@ import {
 import { useEffect, useState } from 'react';
 import { BootScreen } from '@/components/boot-screen';
 import { Toaster } from '@/components/ui/sonner';
+import { defaultBaseConfig, getHeadBranding } from '@/lib/branding';
+import { fetchSsrBaseBranding } from '@/lib/ssr-branding';
 
 import appCss from '../styles.css?url';
 
@@ -123,32 +125,40 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
 }
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
-  head: () => ({
-    meta: [
-      { charSet: 'utf-8' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { title: 'ZoneLease' },
-      { name: 'description', content: 'Windows DNS 与 DHCP 统一管理控制台。' },
-      { name: 'author', content: 'ZoneLease' },
-      { property: 'og:title', content: 'ZoneLease 控制台' },
-      { property: 'og:description', content: 'Windows DNS 与 DHCP 统一管理控制台。' },
-      { property: 'og:type', content: 'website' },
-      { name: 'twitter:card', content: 'summary' },
-      { name: 'twitter:title', content: 'ZoneLease 控制台' },
-      { name: 'twitter:description', content: 'Windows DNS 与 DHCP 统一管理控制台。' },
-    ],
-    links: [
-      {
-        rel: 'stylesheet',
-        href: appCss,
-      },
-      {
-        rel: 'icon',
-        href: '/favicon.svg',
-        type: 'image/svg+xml',
-      },
-    ],
-  }),
+  loader: async () => fetchSsrBaseBranding(),
+  head: ({ loaderData }) => {
+    const branding =
+      getHeadBranding() ??
+      loaderData ?? {
+        siteName: defaultBaseConfig.siteName,
+        iconData: defaultBaseConfig.iconData,
+      };
+    return {
+      meta: [
+        { charSet: 'utf-8' },
+        { name: 'viewport', content: 'width=device-width, initial-scale=1' },
+        { title: branding.siteName },
+        { name: 'description', content: 'Windows DNS 与 DHCP 统一管理控制台。' },
+        { name: 'author', content: 'ZoneLease' },
+        { property: 'og:title', content: 'ZoneLease 控制台' },
+        { property: 'og:description', content: 'Windows DNS 与 DHCP 统一管理控制台。' },
+        { property: 'og:type', content: 'website' },
+        { name: 'twitter:card', content: 'summary' },
+        { name: 'twitter:title', content: 'ZoneLease 控制台' },
+        { name: 'twitter:description', content: 'Windows DNS 与 DHCP 统一管理控制台。' },
+      ],
+      links: [
+        {
+          rel: 'stylesheet',
+          href: appCss,
+        },
+        {
+          rel: 'icon',
+          href: branding.iconData,
+        },
+      ],
+    };
+  },
   shellComponent: RootShell,
   component: RootComponent,
   notFoundComponent: NotFoundComponent,

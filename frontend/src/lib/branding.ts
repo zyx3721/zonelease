@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useMatches } from '@tanstack/react-router';
 import { fetchPublicSystemBaseConfig, type SystemBaseConfig } from './system-settings';
 
 export const defaultBaseConfig: SystemBaseConfig = {
@@ -30,8 +31,30 @@ let pendingBaseConfig: Promise<SystemBaseConfig> | null = null;
 const listeners = new Set<(config: SystemBaseConfig) => void>();
 const BASE_CONFIG_CACHE_TTL_MS = 30_000;
 
+export type SsrBaseBranding = {
+  siteName: string;
+  loginName: string;
+  appName: string;
+  appSubtitle: string;
+  iconData: string;
+};
+
+export const defaultSsrBaseBranding: SsrBaseBranding = {
+  siteName: defaultBaseConfig.siteName,
+  loginName: defaultBaseConfig.loginName,
+  appName: defaultBaseConfig.appName,
+  appSubtitle: defaultBaseConfig.appSubtitle,
+  iconData: defaultBaseConfig.iconData,
+};
+
 export function getBaseConfigSnapshot() {
   return cachedBaseConfig;
+}
+
+// getHeadBranding 返回 head 渲染应使用的品牌字段；客户端快照尚未加载时返回 null，由调用方回退 SSR 数据
+export function getHeadBranding(): { siteName: string; iconData: string } | null {
+  if (typeof window === 'undefined' || baseConfigLoadedAt === 0) return null;
+  return { siteName: cachedBaseConfig.siteName, iconData: cachedBaseConfig.iconData };
 }
 
 export function setBaseConfigSnapshot(config: Partial<SystemBaseConfig>) {
@@ -61,8 +84,34 @@ function loadBaseConfig() {
   return pendingBaseConfig;
 }
 
+// getRootLoaderBranding 从首个 match（恒为 root）的 loader 读取 SSR 直出的品牌数据，供服务端渲染与客户端首帧保持一致
+function getRootLoaderBranding(): SsrBaseBranding | null {
+  const data = useMatches()[0]?.loaderData as Partial<SsrBaseBranding> | undefined;
+  if (
+    !data?.siteName ||
+    !data?.loginName ||
+    !data?.appName ||
+    !data?.appSubtitle ||
+    !data?.iconData
+  ) {
+    return null;
+  }
+  return {
+    siteName: data.siteName,
+    loginName: data.loginName,
+    appName: data.appName,
+    appSubtitle: data.appSubtitle,
+    iconData: data.iconData,
+  };
+}
+
 export function useBaseConfig() {
-  const [config, setConfig] = useState<SystemBaseConfig>(cachedBaseConfig);
+  const rootBranding = getRootLoaderBranding();
+  const [config, setConfig] = useState<SystemBaseConfig>(() => {
+    if (baseConfigLoadedAt > 0) return cachedBaseConfig;
+    if (rootBranding) return { ...defaultBaseConfig, ...rootBranding };
+    return cachedBaseConfig;
+  });
 
   useEffect(() => {
     listeners.add(setConfig);
