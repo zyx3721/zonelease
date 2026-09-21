@@ -2,6 +2,7 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import { KeyRound, Loader2, Lock, Mail, Moon, RefreshCw, Send, Sun, User } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { useBaseConfig } from '@/lib/branding';
 import {
   confirmPasswordReset,
   fetchPasswordResetCaptcha,
@@ -29,6 +30,7 @@ const primaryButtonStyle = {
 export function ForgotPasswordPage() {
   const navigate = useNavigate();
   const verifyEmailRef = useRef<HTMLInputElement | null>(null);
+  const baseConfig = useBaseConfig();
   const [theme, setTheme] = useState<ZlTheme>(getInitialZlTheme);
   const [step, setStep] = useState<Step>('identity');
   const [username, setUsername] = useState('');
@@ -221,10 +223,12 @@ export function ForgotPasswordPage() {
         <div className="zl-login-reveal flex flex-col items-center text-center">
           <img
             className="mb-4 h-20 w-20 drop-shadow-[0_18px_42px_rgba(6,182,212,0.18)]"
-            src="/favicon.svg"
-            alt="ZoneLease"
+            src={baseConfig.iconData}
+            alt={baseConfig.loginName}
           />
-          <p className="zl-gradient-text text-2xl font-bold tracking-wide">ZoneLease</p>
+          <p className="zl-gradient-text text-2xl font-bold tracking-wide">
+            {baseConfig.loginName}
+          </p>
           <p
             className="mt-1 text-xs uppercase tracking-[0.28em]"
             style={{ color: 'var(--zl-text-muted)' }}
@@ -396,7 +400,7 @@ export function ForgotPasswordPage() {
           </div>
         </section>
         <p className="text-xs" style={{ color: 'var(--zl-text-muted)' }}>
-          (c) 2026 ZoneLease. Secure DNS and DHCP operations console.
+          (c) 2026 {baseConfig.siteName}. Secure DNS and DHCP operations console.
         </p>
       </section>
     </main>
