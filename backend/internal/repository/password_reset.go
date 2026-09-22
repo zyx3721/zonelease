@@ -81,6 +81,15 @@ func (s *Store) FindPasswordResetRequest(ctx context.Context, token string) (Pas
 	return item, err
 }
 
+// DeleteStalePasswordResetRequests 删除指定时间之前创建的找回密码请求记录，供发送验证码时惰性清理
+func (s *Store) DeleteStalePasswordResetRequests(ctx context.Context, before time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM password_reset_requests
+		WHERE created_at < $1
+	`, before)
+	return err
+}
+
 func (s *Store) MarkPasswordResetUsed(ctx context.Context, token string) error {
 	cmd, err := s.pool.Exec(ctx, `
 		UPDATE password_reset_requests SET used_at=now()

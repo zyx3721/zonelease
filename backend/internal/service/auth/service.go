@@ -67,6 +67,7 @@ type Store interface {
 	SetPasswordResetCode(ctx context.Context, token, codeHash, channel string, expiresAt time.Time) error
 	FindPasswordResetRequest(ctx context.Context, token string) (repository.PasswordResetRequest, error)
 	MarkPasswordResetUsed(ctx context.Context, token string) error
+	DeleteStalePasswordResetRequests(ctx context.Context, before time.Time) error
 	LatestRecentPasswordResetCodeSentAt(ctx context.Context, userID string, since time.Time) (time.Time, bool, error)
 	CountRecentPasswordResetCodes(ctx context.Context, userID string, since time.Time) (int, error)
 	GetSystemBaseConfig(ctx context.Context) (domain.SystemBaseConfig, error)

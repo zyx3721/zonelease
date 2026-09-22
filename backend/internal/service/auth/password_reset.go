@@ -93,6 +93,7 @@ func (s *Service) SendResetCode(ctx context.Context, verificationToken, channel,
 			return 0, "", err
 		}
 	}
+	_ = s.store.DeleteStalePasswordResetRequests(ctx, s.now().Add(-7*24*time.Hour))
 	return cfg.ResetSendCooldownSecs, code, nil
 }
 

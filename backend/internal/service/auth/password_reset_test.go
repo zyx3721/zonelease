@@ -232,6 +232,10 @@ func (s *passwordResetStore) MarkPasswordResetUsed(context.Context, string) erro
 	return nil
 }
 
+func (s *passwordResetStore) DeleteStalePasswordResetRequests(context.Context, time.Time) error {
+	return nil
+}
+
 func (s *passwordResetStore) LatestRecentPasswordResetCodeSentAt(context.Context, string, time.Time) (time.Time, bool, error) {
 	return s.lastResetCodeSentAt, s.resetCodeCooling, nil
 }
