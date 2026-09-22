@@ -14,8 +14,7 @@ import (
 )
 
 const (
-	defaultSessionHours     = 24
-	defaultSessionIdleHours = 12
+	defaultSessionHours = 12
 )
 
 type Config struct {
@@ -49,13 +48,12 @@ type RedisConfig struct {
 }
 
 type AuthConfig struct {
-	SessionSecret          string
-	SessionExpireHours     int
-	SessionIdleExpireHours int
-	ResetCodeTTL           time.Duration
-	ResetCaptchaTTL        time.Duration
-	ResetVerificationTTL   time.Duration
-	ResetSendCooldownSecs  int
+	SessionSecret         string
+	SessionExpireHours    int
+	ResetCodeTTL          time.Duration
+	ResetCaptchaTTL       time.Duration
+	ResetVerificationTTL  time.Duration
+	ResetSendCooldownSecs int
 }
 
 type RuntimeConfig struct {
@@ -92,13 +90,12 @@ func Load(logger *slog.Logger) (Config, error) {
 			DB:       envIntAllowZero("REDIS_DB", 0),
 		},
 		Auth: AuthConfig{
-			SessionSecret:          os.Getenv("JWT_SECRET"),
-			SessionExpireHours:     envInt("JWT_EXPIRE_HOURS", defaultSessionHours),
-			SessionIdleExpireHours: envInt("SESSION_IDLE_TIMEOUT_HOURS", defaultSessionIdleHours),
-			ResetCodeTTL:           10 * time.Minute,
-			ResetCaptchaTTL:        time.Minute,
-			ResetVerificationTTL:   10 * time.Minute,
-			ResetSendCooldownSecs:  30,
+			SessionSecret:         os.Getenv("JWT_SECRET"),
+			SessionExpireHours:    envInt("JWT_EXPIRE_HOURS", defaultSessionHours),
+			ResetCodeTTL:          10 * time.Minute,
+			ResetCaptchaTTL:       time.Minute,
+			ResetVerificationTTL:  10 * time.Minute,
+			ResetSendCooldownSecs: 30,
 		},
 		Runtime: RuntimeConfig{
 			RefreshTTL:           2 * time.Minute,
@@ -169,10 +166,6 @@ func (d DatabaseConfig) DSN() string {
 
 func (a AuthConfig) SessionTTL() time.Duration {
 	return time.Duration(a.SessionExpireHours) * time.Hour
-}
-
-func (a AuthConfig) SessionIdleTTL() time.Duration {
-	return time.Duration(a.SessionIdleExpireHours) * time.Hour
 }
 
 func env(key string, fallback string) string {

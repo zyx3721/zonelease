@@ -59,7 +59,6 @@ type Store interface {
 	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
 	CreateSession(ctx context.Context, token string, userID string, provider string, expiresAt time.Time) error
 	FindSession(ctx context.Context, token string) (domain.User, string, time.Time, time.Time, error)
-	TouchSession(ctx context.Context, token string) error
 	DeleteSession(ctx context.Context, token string) error
 	DeleteUserSessions(ctx context.Context, userID string) error
 	DeleteExpiredSessions(ctx context.Context) error
@@ -82,7 +81,6 @@ type ResetNotifier interface {
 type Config struct {
 	SessionSecret         string
 	SessionTTL            time.Duration
-	SessionIdleTTL        time.Duration
 	ResetCodeTTL          time.Duration
 	ResetCaptchaTTL       time.Duration
 	ResetVerificationTTL  time.Duration
@@ -222,14 +220,8 @@ func (s *Service) Validate(ctx context.Context, token string) (domain.Session, e
 	_ = s.store.DeleteExpiredSessions(ctx)
 	user, provider, expiresAt, lastSeenAt, err := s.store.FindSession(ctx, token)
 	now := s.now()
-	if err != nil || !expiresAt.After(now) || !lastSeenAt.Add(s.cfg.SessionIdleTTL).After(now) || user.Disabled {
+	if err != nil || !expiresAt.After(now) || user.Disabled {
 		return domain.Session{}, ErrInvalidSession
-	}
-	if now.Sub(lastSeenAt) >= 5*time.Minute {
-		if err := s.store.TouchSession(ctx, token); err != nil {
-			return domain.Session{}, err
-		}
-		lastSeenAt = now
 	}
 	return domain.Session{Token: token, Provider: normalizeSessionProvider(provider), ExpiresAt: expiresAt, LastSeenAt: lastSeenAt, User: user}, nil
 }

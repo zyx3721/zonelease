@@ -77,7 +77,6 @@ func main() {
 	authService := authsvc.New(store, authsvc.Config{
 		SessionSecret:         cfg.Auth.SessionSecret,
 		SessionTTL:            cfg.Auth.SessionTTL(),
-		SessionIdleTTL:        cfg.Auth.SessionIdleTTL(),
 		ResetCodeTTL:          cfg.Auth.ResetCodeTTL,
 		ResetCaptchaTTL:       cfg.Auth.ResetCaptchaTTL,
 		ResetVerificationTTL:  cfg.Auth.ResetVerificationTTL,

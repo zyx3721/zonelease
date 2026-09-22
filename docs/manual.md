@@ -279,8 +279,7 @@ DB_SSLMODE=disable
 
 # 登录与会话配置
 JWT_SECRET=your_jwt_secret_key
-JWT_EXPIRE_HOURS=24
-SESSION_IDLE_TIMEOUT_HOURS=12
+JWT_EXPIRE_HOURS=12
 
 # Redis 缓存与后台刷新
 REDIS_ADDR=localhost:6379
@@ -410,8 +409,7 @@ DB_PASSWORD=123456ok!
 DB_SSLMODE=disable
 
 JWT_SECRET=change-me-in-production
-JWT_EXPIRE_HOURS=24
-SESSION_IDLE_TIMEOUT_HOURS=12
+JWT_EXPIRE_HOURS=12
 
 REDIS_ADDR=redis:6379
 REDIS_PASSWORD=123456
@@ -670,8 +668,7 @@ DB_SSLMODE=disable
 
 # 登录与会话配置
 JWT_SECRET=your_jwt_secret_key
-JWT_EXPIRE_HOURS=24
-SESSION_IDLE_TIMEOUT_HOURS=12
+JWT_EXPIRE_HOURS=12
 
 # Redis 缓存与后台刷新
 REDIS_ADDR=localhost:6379
@@ -1375,8 +1372,7 @@ DNS 区域卡片右侧刷新按钮会调用 `POST /api/dns/zones/{id}/refresh`�
 | `DB_PASSWORD`                | `zonelease_dev`         | PostgreSQL 密码                                                    |
 | `DB_SSLMODE`                 | `disable`               | PostgreSQL SSL 模式                                                |
 | `JWT_SECRET`                 | 启动时临时生成          | 会话 Token 服务端密钥，生产环境必须固定配置                        |
-| `JWT_EXPIRE_HOURS`           | `24`                    | 登录会话最长有效期，单位小时                                       |
-| `SESSION_IDLE_TIMEOUT_HOURS` | `12`                    | 会话空闲超时时间，单位小时                                         |
+| `JWT_EXPIRE_HOURS`           | `12`                    | 登录会话最长有效期，单位小时，对账号密码、LDAP、企业微信登录统一生效 |
 | `REDIS_ADDR`                 | `localhost:6379`        | Redis 地址                                                         |
 | `REDIS_PASSWORD`             | 空                      | Redis 密码                                                         |
 | `REDIS_DB`                   | `0`                     | Redis 数据库编号                                                   |

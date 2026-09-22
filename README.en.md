@@ -189,7 +189,7 @@ Key environment variables (full list in [chapter 6.8 of the manual](docs/manual.
 | `DB_HOST` / `DB_PORT` | `localhost` / `5432` | PostgreSQL address |
 | `DB_NAME` / `DB_USER` / `DB_PASSWORD` | `zonelease` / `zonelease` / `zonelease_dev` | Database and credentials |
 | `REDIS_ADDR` | `localhost:6379` | Redis address |
-| `JWT_EXPIRE_HOURS` | `24` | Session lifetime in hours; idle timeout via `SESSION_IDLE_TIMEOUT_HOURS` (default 12h) |
+| `JWT_EXPIRE_HOURS` | `12` | Session lifetime in hours, applied uniformly to password, LDAP and WeCom logins; no idle timeout |
 
 Service management:
 
@@ -452,7 +452,7 @@ The backend creates `admin / 123456` on first start when the users table is empt
 
 **Why are tokens invalid after a restart?**
 
-Sessions live in the PostgreSQL `sessions` table and survive restarts. Invalidation usually means `JWT_SECRET` was rotated or the idle timeout hit. Defaults are controlled by `JWT_EXPIRE_HOURS` and `SESSION_IDLE_TIMEOUT_HOURS`.
+Sessions live in the PostgreSQL `sessions` table and survive restarts. Invalidation usually means the session expired. The lifetime is controlled by `JWT_EXPIRE_HOURS` (default 12h) with no idle timeout or sliding renewal.
 
 **The DNS page shows no zones or records**
 

@@ -61,7 +61,7 @@ let cachedPublicAuthProviders: {
 
 function storage() {
   if (typeof window === 'undefined') return null;
-  return window.localStorage;
+  return window.sessionStorage;
 }
 
 function emitSessionChanged() {

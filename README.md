@@ -189,7 +189,7 @@ Compose 会创建 `zonelease-postgres`、`zonelease-redis` 与 `zonelease` 三�
 | `DB_HOST` / `DB_PORT` | `localhost` / `5432` | PostgreSQL 连接地址 |
 | `DB_NAME` / `DB_USER` / `DB_PASSWORD` | `zonelease` / `zonelease` / `zonelease_dev` | 数据库与账号 |
 | `REDIS_ADDR` | `localhost:6379` | Redis 连接地址 |
-| `JWT_EXPIRE_HOURS` | `24` | 登录会话有效期（小时），空闲超时由 `SESSION_IDLE_TIMEOUT_HOURS` 控制（默认 12 小时） |
+| `JWT_EXPIRE_HOURS` | `12` | 登录会话有效期（小时），对账号密码、LDAP、企业微信登录统一生效，无空闲超时 |
 
 服务管理：
 
@@ -452,7 +452,7 @@ PostgreSQL 数据库，默认由后端首次启动自动执行 `migrations/001_i
 
 **为什么重启后已有 Token 失效？**
 
-会话令牌保存在 PostgreSQL `sessions` 表，重启不影响；失效通常是更换了 `JWT_SECRET` 或会话超过空闲时效。默认有效期与空闲时效由 `JWT_EXPIRE_HOURS`、`SESSION_IDLE_TIMEOUT_HOURS` 控制。
+会话令牌保存在 PostgreSQL `sessions` 表，重启不影响；失效通常是会话超过有效期。会话有效期由 `JWT_EXPIRE_HOURS` 控制（默认 12 小时），无空闲超时与自动续期。
 
 **DNS 页面没有区域或记录怎么办？**
 

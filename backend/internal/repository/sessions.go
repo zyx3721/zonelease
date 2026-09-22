@@ -41,11 +41,6 @@ func (s *Store) FindSession(ctx context.Context, token string) (domain.User, str
 	return users[0], provider, expiresAt, lastSeenAt, nil
 }
 
-func (s *Store) TouchSession(ctx context.Context, token string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE sessions SET last_seen_at=now() WHERE token_hash=$1`, HashToken(token))
-	return err
-}
-
 func (s *Store) DeleteSession(ctx context.Context, token string) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash=$1`, HashToken(token))
 	return err
