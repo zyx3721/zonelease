@@ -1531,7 +1531,7 @@ swag init -g cmd/server/main.go -o docs
 
 ## 10.1 认证
 
-- `POST /api/auth/login` - 登录，返回会话 Token、本次认证来源、用户信息、最长过期时间和最近活跃时间；用户名或密码为空会返回 `invalid_login`
+- `POST /api/auth/login` - 登录，返回会话 Token、本次认证来源、用户信息、最长过期时间和最近活跃时间；用户名或密码为空会返回 `invalid_login`；同一账号连续密码失败达到「安全时效」配置的锁定次数后返回 429 并提示剩余等待分钟数，锁定时长内即使密码正确也会被拒绝，登录成功或锁定窗口过期后重新计数，内置管理员 admin 不受限
 - `GET /api/auth/providers` - 获取公开认证方式，登录页用于读取已启用的本地、AD/LDAP 或企业微信登录方式
 - `POST /api/auth/logout` - 注销当前会话；携带 Bearer Token 时后端会删除对应会话，未携带或会话已失效时也会幂等返回成功
 - `GET /api/auth/me` - 获取当前登录用户；Token 无效或过期时返回 `unauthorized`

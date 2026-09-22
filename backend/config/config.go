@@ -50,6 +50,8 @@ type RedisConfig struct {
 type AuthConfig struct {
 	SessionSecret         string
 	SessionExpireHours    int
+	LoginMaxFailures      int
+	LoginLockoutMinutes   int
 	ResetCodeTTL          time.Duration
 	ResetCaptchaTTL       time.Duration
 	ResetVerificationTTL  time.Duration
@@ -100,6 +102,8 @@ func LoadWithOverrides(logger *slog.Logger, overrides map[string]string) (Config
 		Auth: AuthConfig{
 			SessionSecret:         lookupRaw(overrides, "jwt_secret", "JWT_SECRET"),
 			SessionExpireHours:    lookupInt(overrides, "jwt_expire_hours", "JWT_EXPIRE_HOURS", defaultSessionHours),
+			LoginMaxFailures:      lookupInt(overrides, "login_max_failures", "LOGIN_MAX_FAILURES", 5),
+			LoginLockoutMinutes:   lookupInt(overrides, "login_lockout_minutes", "LOGIN_LOCKOUT_MINUTES", 2),
 			ResetCodeTTL:          10 * time.Minute,
 			ResetCaptchaTTL:       time.Minute,
 			ResetVerificationTTL:  10 * time.Minute,

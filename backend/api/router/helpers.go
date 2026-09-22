@@ -259,5 +259,8 @@ func statusFromErr(err error) int {
 	if errors.Is(err, auth.ErrResetCodeCooldown) || errors.Is(err, auth.ErrResetCodeRateLimited) {
 		return http.StatusTooManyRequests
 	}
+	if errors.Is(err, auth.ErrLoginLocked) {
+		return http.StatusTooManyRequests
+	}
 	return http.StatusInternalServerError
 }

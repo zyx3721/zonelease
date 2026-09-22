@@ -2,6 +2,7 @@ package router
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -67,14 +68,30 @@ func (r *Router) login(w http.ResponseWriter, req *http.Request) {
 	if provider == "" {
 		provider = "local"
 	}
+	if err := r.auth.EnsureLoginAllowed(req.Context(), body.Username); err != nil {
+		var locked authsvc.LoginLockedError
+		if errors.As(err, &locked) {
+			writeError(w, http.StatusTooManyRequests, "login_locked", fmt.Sprintf("密码连续错误次数过多，请于 %d 分钟后再试", locked.Minutes))
+			return
+		}
+		r.logger.Error("Check login lock failed", "error", err)
+	}
 	session, err := r.auth.LoginWithProvider(req.Context(), provider, body.Username, body.Password)
 	if err != nil {
 		if errors.Is(err, authsvc.ErrUserNotProvisioned) {
 			writeError(w, http.StatusUnauthorized, "user_not_provisioned", "用户未在平台中启用")
 			return
 		}
+		if errors.Is(err, authsvc.ErrInvalidCredentials) {
+			if recordErr := r.auth.RecordLoginFailure(req.Context(), body.Username); recordErr != nil {
+				r.logger.Error("Record login failure failed", "error", recordErr)
+			}
+		}
 		writeError(w, statusFromErr(err), "login_failed", "用户名或密码错误")
 		return
+	}
+	if _, clearErr := r.auth.ClearLoginFailures(req.Context(), body.Username); clearErr != nil {
+		r.logger.Error("Clear login failures failed", "error", clearErr)
 	}
 	_ = r.store.WriteAudit(req.Context(), session.User.ID, session.User.Username, "User login", session.User.Username, "System", "success", auditMetadata(map[string]any{
 		"username": session.User.Username,

@@ -62,6 +62,9 @@ type Store interface {
 	DeleteSession(ctx context.Context, token string) error
 	DeleteUserSessions(ctx context.Context, userID string) error
 	DeleteExpiredSessions(ctx context.Context) error
+	CountLoginFailures(ctx context.Context, username string) (int64, int64, error)
+	CreateLoginFailure(ctx context.Context, username string, failedAt int64) error
+	ClearLoginFailures(ctx context.Context, username string) (int64, error)
 	CreatePasswordResetRequest(ctx context.Context, token, userID string, expiresAt time.Time) error
 	SetPasswordResetCode(ctx context.Context, token, codeHash, channel string, expiresAt time.Time) error
 	FindPasswordResetRequest(ctx context.Context, token string) (repository.PasswordResetRequest, error)
@@ -81,6 +84,8 @@ type ResetNotifier interface {
 type Config struct {
 	SessionSecret         string
 	SessionTTL            time.Duration
+	LoginMaxFailures      int
+	LoginLockoutMinutes   int
 	ResetCodeTTL          time.Duration
 	ResetCaptchaTTL       time.Duration
 	ResetVerificationTTL  time.Duration
