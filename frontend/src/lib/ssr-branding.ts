@@ -6,10 +6,7 @@ import { serverEnv } from './server-env';
 export const fetchSsrBaseBranding = createServerFn({ method: 'GET' }).handler(
   async (): Promise<SsrBaseBranding> => {
     const origin =
-      (await serverEnv('ZONELEASE_SSR_API_ORIGIN')) ||
-      (await serverEnv('VITE_API_BASE_URL')) ||
-      import.meta.env.VITE_API_BASE_URL ||
-      'http://127.0.0.1:8080';
+      (await serverEnv('SSR_API_ORIGIN')) || 'http://127.0.0.1:8080';
     try {
       const response = await fetch(`${origin}/api/public/base`, {
         headers: { accept: 'application/json' },

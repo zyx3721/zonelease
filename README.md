@@ -324,8 +324,10 @@ systemctl daemon-reload && systemctl enable --now zonelease-backend
 
 ```bash
 cd /data/zonelease/frontend
-HOST=127.0.0.1 PORT=5173 node .output/server/index.mjs
+SSR_API_ORIGIN=http://127.0.0.1:8080 HOST=127.0.0.1 PORT=5173 node .output/server/index.mjs
 ```
+
+SSR 进程启动时会访问后端拉取品牌配置，把站点名与图标直出进首帧 HTML。后端地址按以下顺序确定：运行时环境变量 `SSR_API_ORIGIN` → 入口文件 `index.mjs` 所在目录向上任意一层的 `.env` 文件（首个存在的生效，可与后端共用部署根目录的同一份 `.env`）→ 默认 `http://127.0.0.1:8080`。请确保该地址对 SSR 进程可达，否则首屏会先显示默认品牌、加载后再切换为配置值，SSR 进程日志会输出 `[zonelease-ssr] fetch brand failed` 警告。
 
 **5. 用 Nginx 收口**
 
