@@ -324,7 +324,7 @@ nohup go run cmd/server/main.go > app.log 2>&1 &
 | `-redis-addr` | `REDIS_ADDR` | Redis 地址 |
 | `-redis-password` | `REDIS_PASSWORD` | Redis 密码 |
 | `-redis-db` | `REDIS_DB` | Redis 库编号 |
-| `-jwt-secret` | `JWT_SECRET` | 会话令牌签名密钥（找回密码链接签名） |
+| `-jwt-secret` | `JWT_SECRET` | 找回密码验证码与企业微信 OAuth state 的签名密钥 |
 | `-session-ttl` | `JWT_EXPIRE_HOURS` | 登录会话有效期（小时） |
 | `-dns-sync-interval` | `RUNTIME_DNS_DEEP_SYNC_INTERVAL` | DNS 深度同步间隔（如 1h、1d） |
 | `-dhcp-sync-interval` | `RUNTIME_DHCP_DEEP_SYNC_INTERVAL` | DHCP 深度同步间隔（如 1h、1d） |
@@ -1406,7 +1406,7 @@ DNS 区域卡片右侧刷新按钮会调用 `POST /api/dns/zones/{id}/refresh`�
 | `DB_USER`                    | `zonelease`             | PostgreSQL 用户名                                                  |
 | `DB_PASSWORD`                | `zonelease_dev`         | PostgreSQL 密码                                                    |
 | `DB_SSLMODE`                 | `disable`               | PostgreSQL SSL 模式                                                |
-| `JWT_SECRET`                 | 启动时临时生成          | 会话 Token 服务端密钥，生产环境必须固定配置                        |
+| `JWT_SECRET`                 | 启动时临时生成          | 找回密码验证码与企业微信 OAuth state 的签名密钥，不影响已登录会话；生产环境必须固定配置 |
 | `JWT_EXPIRE_HOURS`           | `12`                    | 登录会话最长有效期，单位小时，对账号密码、LDAP、企业微信登录统一生效 |
 | `REDIS_ADDR`                 | `localhost:6379`        | Redis 地址                                                         |
 | `REDIS_PASSWORD`             | 空                      | Redis 密码                                                         |
@@ -1464,7 +1464,7 @@ DHCP Agent：
 
 # 七、安全说明
 
-- 生产环境必须设置固定且足够随机的 `JWT_SECRET`，避免服务重启导致会话失效或 Token 可被伪造。
+- 生产环境必须设置固定且足够随机的 `JWT_SECRET`，该密钥仅用于找回密码验证码与企业微信 OAuth state 签名，不影响已登录会话；固定配置可保证重启后进行中的找回密码流程与企微登录校验不失效。
 - 生产环境 Agent API Key 必须使用强随机值，并仅通过内网或 HTTPS 传输；如果 `DNS_AGENT_API_KEY` 或 `DHCP_AGENT_API_KEY` 留空，Agent 不会校验业务接口 API Key。
 - 不建议开启 `DNS_AGENT_ALLOW_ANONYMOUS` 或 `DHCP_AGENT_ALLOW_ANONYMOUS`；仅允许在隔离测试环境临时使用。
 - 后端 CORS 不建议设置为 `*`，应配置为真实前端访问域名。
@@ -1488,9 +1488,9 @@ DHCP Agent：
 
 后端会在用户表为空时创建 `admin / 123456`。已有任意用户时不会重复创建默认账号。
 
-## Q2: 为什么重启后已有 Token 失效？
+## Q2: 重启后已有 Token 会失效吗？
 
-如果没有配置 `JWT_SECRET`，后端会在进程启动时生成临时密钥。生产环境必须在 `.env` 中固定 `JWT_SECRET`。
+不会。会话令牌保存在 PostgreSQL `sessions` 表，正常重启不影响已有 Token；失效通常是会话超过 `JWT_EXPIRE_HOURS` 有效期或数据库数据被清理。`JWT_SECRET` 仅用于找回密码验证码与企业微信 OAuth state 签名，与登录会话无关，但生产环境仍必须在 `.env` 中固定配置。
 
 ## Q3: DNS 页面没有区域或记录怎么办？
 

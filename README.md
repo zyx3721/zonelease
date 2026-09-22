@@ -183,7 +183,7 @@ Compose 会创建 `zonelease-postgres`、`zonelease-redis` 与 `zonelease` 三�
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `JWT_SECRET` | 空 | 会话令牌签名密钥，生产环境必须显式设置为足够随机的长字符串 |
+| `JWT_SECRET` | 空 | 找回密码验证码与企业微信 OAuth state 的签名密钥，不影响已登录会话；生产环境必须显式设置为足够随机的长字符串 |
 | `SERVER_PORT` | `8080` | 后端监听端口，容器内由 Nginx 反代，保持默认即可 |
 | `SERVER_MODE` | `release` | 运行模式；`release` 下找回密码不回显调试验证码 |
 | `DB_HOST` / `DB_PORT` | `localhost` / `5432` | PostgreSQL 连接地址 |
@@ -286,7 +286,7 @@ vim .env               # 至少设置 JWT_SECRET
 | `-redis-addr` | `REDIS_ADDR` | Redis 地址 |
 | `-redis-password` | `REDIS_PASSWORD` | Redis 密码 |
 | `-redis-db` | `REDIS_DB` | Redis 库编号 |
-| `-jwt-secret` | `JWT_SECRET` | 会话令牌签名密钥（找回密码链接签名） |
+| `-jwt-secret` | `JWT_SECRET` | 找回密码验证码与企业微信 OAuth state 的签名密钥 |
 | `-session-ttl` | `JWT_EXPIRE_HOURS` | 登录会话有效期（小时） |
 | `-dns-sync-interval` | `RUNTIME_DNS_DEEP_SYNC_INTERVAL` | DNS 深度同步间隔（如 1h、1d） |
 | `-dhcp-sync-interval` | `RUNTIME_DHCP_DEEP_SYNC_INTERVAL` | DHCP 深度同步间隔（如 1h、1d） |
@@ -432,7 +432,7 @@ server {
 ## 数据与安全
 
 - **先改默认密码** — 首次部署后立即修改 `admin` 的默认口令。
-- **显式设置 JWT 密钥** — 生产环境必须在 `.env` 中设置 `JWT_SECRET`；重设后全部已签发会话立即失效。
+- **显式设置 JWT 密钥** — 生产环境必须在 `.env` 中设置 `JWT_SECRET`；该密钥用于找回密码验证码与企业微信 OAuth state 签名，轮换后已登录会话不受影响，进行中的找回密码流程需重新开始。
 - **Agent 鉴权** — Windows Agent 建议配置 `X-API-Key`，控制台侧按服务器保存；legacy Agent 同样支持 API Key。
 - **凭据脱敏** — LDAP 绑定密码、企微应用 Secret / 应用对接密钥、SMTP 密码落库保存，接口回显只返回「已配置」标记。
 - **审计边界** — 请求格式错误、认证失败等前置失败不写审计，避免污染操作记录；成功变更全量落审计。

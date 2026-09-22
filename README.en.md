@@ -183,7 +183,7 @@ Key environment variables (full list in [chapter 6.8 of the manual](docs/manual.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `JWT_SECRET` | empty | Session token signing key; set a long random string in production |
+| `JWT_SECRET` | empty | Signing key for password-reset captcha and WeCom OAuth state; does not affect issued sessions; set a long random string in production |
 | `SERVER_PORT` | `8080` | Backend listen port, reverse-proxied by Nginx in the container |
 | `SERVER_MODE` | `release` | Run mode; `release` hides debug recovery codes |
 | `DB_HOST` / `DB_PORT` | `localhost` / `5432` | PostgreSQL address |
@@ -286,7 +286,7 @@ The backend also supports command-line flags; explicitly passed flags take prece
 | `-redis-addr` | `REDIS_ADDR` | Redis address |
 | `-redis-password` | `REDIS_PASSWORD` | Redis password |
 | `-redis-db` | `REDIS_DB` | Redis database index |
-| `-jwt-secret` | `JWT_SECRET` | Session token signing secret (password reset link HMAC) |
+| `-jwt-secret` | `JWT_SECRET` | Signing key for password-reset captcha and WeCom OAuth state |
 | `-session-ttl` | `JWT_EXPIRE_HOURS` | Session lifetime in hours |
 | `-dns-sync-interval` | `RUNTIME_DNS_DEEP_SYNC_INTERVAL` | DNS deep sync interval (e.g. 1h, 1d) |
 | `-dhcp-sync-interval` | `RUNTIME_DHCP_DEEP_SYNC_INTERVAL` | DHCP deep sync interval (e.g. 1h, 1d) |
@@ -432,7 +432,7 @@ By module:
 ## Security
 
 - **Change the default password first** — update `admin` immediately after the first deployment.
-- **Set JWT_SECRET explicitly** — required in production; rotating it invalidates every issued session.
+- **Set JWT_SECRET explicitly** — required in production; it signs password-reset captcha and WeCom OAuth state, so rotating it does not affect logged-in sessions, while in-flight password-reset flows must restart.
 - **Agent authentication** — configure `X-API-Key` on Windows agents and store matching keys per server in the console; legacy agents support API keys too.
 - **Credential redaction** — LDAP bind password, WeCom secret / app secret and SMTP password are stored server-side; API responses only carry "configured" markers.
 - **Audit boundaries** — pre-validation failures (bad request, auth failure) are not audited; successful changes always are.

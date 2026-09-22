@@ -172,7 +172,7 @@ func main() {
 	redisAddr := flag.String("redis-addr", "", "Redis 地址，等价环境变量 REDIS_ADDR")
 	redisPassword := flag.String("redis-password", "", "Redis 密码，等价环境变量 REDIS_PASSWORD")
 	redisDB := flag.Int("redis-db", -1, "Redis 库编号，等价环境变量 REDIS_DB")
-	jwtSecret := flag.String("jwt-secret", "", "会话令牌签名密钥，等价环境变量 JWT_SECRET")
+	jwtSecret := flag.String("jwt-secret", "", "找回密码验证码与企业微信 OAuth state 的签名密钥，等价环境变量 JWT_SECRET")
 	sessionTTLHours := flag.Int("session-ttl", 0, "登录会话有效期（小时），等价环境变量 JWT_EXPIRE_HOURS")
 	dnsSyncInterval := flag.String("dns-sync-interval", "", "DNS 深度同步间隔（如 1h、1d），等价环境变量 RUNTIME_DNS_DEEP_SYNC_INTERVAL")
 	dhcpSyncInterval := flag.String("dhcp-sync-interval", "", "DHCP 深度同步间隔（如 1h、1d），等价环境变量 RUNTIME_DHCP_DEEP_SYNC_INTERVAL")
