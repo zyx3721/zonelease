@@ -71,6 +71,7 @@ func (r *Router) login(w http.ResponseWriter, req *http.Request) {
 	if err := r.auth.EnsureLoginAllowed(req.Context(), body.Username); err != nil {
 		var locked authsvc.LoginLockedError
 		if errors.As(err, &locked) {
+			_ = r.store.WriteAudit(req.Context(), "", body.Username, "User login locked", body.Username, "System", "failure", auditMetadata(map[string]any{"username": body.Username, "lockMinutes": locked.Minutes}), repository.ClientIP(req))
 			writeError(w, http.StatusTooManyRequests, "login_locked", fmt.Sprintf("密码连续错误次数过多，请于 %d 分钟后再试", locked.Minutes))
 			return
 		}
@@ -220,6 +221,7 @@ func (r *Router) passwordResetConfirm(w http.ResponseWriter, req *http.Request) 
 	if _, clearErr := r.auth.ClearLoginFailures(req.Context(), body.Username); clearErr != nil {
 		r.logger.Error("Clear login failures failed", "error", clearErr)
 	}
+	_ = r.store.WriteAudit(req.Context(), "", body.Username, "Password reset", body.Username, "System", "success", auditMetadata(map[string]any{"username": body.Username}), repository.ClientIP(req))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
