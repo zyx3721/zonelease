@@ -31,7 +31,7 @@ const cards = [
   {
     id: 'security' as const,
     title: '安全时效',
-    description: '找回密码验证码、发送冷却、限流窗口与企业微信扫码有效期',
+    description: '验证码时效、发送限流、扫码有效期与登录失败锁定',
     icon: KeyRound,
     color: '#22c55e',
   },
