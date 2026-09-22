@@ -118,6 +118,8 @@ type SystemBaseConfig struct {
 	AgentHealthCheckIntervalMinutes  int     `json:"agentHealthCheckIntervalMinutes"`
 	AgentHealthCheckConcurrency      int     `json:"agentHealthCheckConcurrency"`
 	WecomStateTtlMinutes             int     `json:"wecomStateTtlMinutes"`
+	LoginMaxFailures                 int     `json:"loginMaxFailures"`
+	LoginLockoutMinutes              int     `json:"loginLockoutMinutes"`
 }
 
 func DefaultSystemBaseConfig() SystemBaseConfig {
@@ -142,6 +144,8 @@ func DefaultSystemBaseConfig() SystemBaseConfig {
 		AgentHealthCheckIntervalMinutes:  1,
 		AgentHealthCheckConcurrency:      1,
 		WecomStateTtlMinutes:             5,
+		LoginMaxFailures:                 5,
+		LoginLockoutMinutes:              2,
 	}
 }
 
@@ -196,6 +200,12 @@ func NormalizeSystemBaseConfig(item SystemBaseConfig) SystemBaseConfig {
 	}
 	if item.WecomStateTtlMinutes <= 0 || item.WecomStateTtlMinutes > 60 {
 		item.WecomStateTtlMinutes = defaults.WecomStateTtlMinutes
+	}
+	if item.LoginMaxFailures <= 0 {
+		item.LoginMaxFailures = defaults.LoginMaxFailures
+	}
+	if item.LoginLockoutMinutes <= 0 {
+		item.LoginLockoutMinutes = defaults.LoginLockoutMinutes
 	}
 	return item
 }

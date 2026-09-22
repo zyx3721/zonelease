@@ -87,6 +87,12 @@ func validateBaseConfig(item domain.SystemBaseConfig) error {
 	if item.PasswordResetRateLimitMinutes < 5 || item.PasswordResetRateLimitMinutes > 10 {
 		return fmt.Errorf("找回密码频率窗口需在 5 到 10 分钟之间")
 	}
+	if item.LoginMaxFailures < 3 || item.LoginMaxFailures > 10 {
+		return fmt.Errorf("登录失败锁定次数需在 3 到 10 次之间")
+	}
+	if item.LoginLockoutMinutes < 1 || item.LoginLockoutMinutes > 10 {
+		return fmt.Errorf("登录锁定等待时长需在 1 到 10 分钟之间")
+	}
 	if item.RuntimeSyncConcurrency < 1 || item.RuntimeSyncConcurrency > 20 {
 		return fmt.Errorf("全量同步并发需在 1 到 20 个之间")
 	}

@@ -254,8 +254,6 @@ func main() {
 	authService := authsvc.New(store, authsvc.Config{
 		SessionSecret:         cfg.Auth.SessionSecret,
 		SessionTTL:            cfg.Auth.SessionTTL(),
-		LoginMaxFailures:      cfg.Auth.LoginMaxFailures,
-		LoginLockoutMinutes:   cfg.Auth.LoginLockoutMinutes,
 		ResetCodeTTL:          cfg.Auth.ResetCodeTTL,
 		ResetCaptchaTTL:       cfg.Auth.ResetCaptchaTTL,
 		ResetVerificationTTL:  cfg.Auth.ResetVerificationTTL,

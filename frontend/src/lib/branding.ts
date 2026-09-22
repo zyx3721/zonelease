@@ -23,6 +23,8 @@ export const defaultBaseConfig: SystemBaseConfig = {
   agentHealthCheckIntervalMinutes: 1,
   agentHealthCheckConcurrency: 1,
   wecomStateTtlMinutes: 5,
+  loginMaxFailures: 5,
+  loginLockoutMinutes: 2,
 };
 
 let cachedBaseConfig = defaultBaseConfig;
@@ -201,6 +203,11 @@ export function normalizeBaseConfig(config: Partial<SystemBaseConfig>): SystemBa
     wecomStateTtlMinutes: numberValue(
       config.wecomStateTtlMinutes,
       defaultBaseConfig.wecomStateTtlMinutes
+    ),
+    loginMaxFailures: numberValue(config.loginMaxFailures, defaultBaseConfig.loginMaxFailures),
+    loginLockoutMinutes: numberValue(
+      config.loginLockoutMinutes,
+      defaultBaseConfig.loginLockoutMinutes
     ),
   };
 }

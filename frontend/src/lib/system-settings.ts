@@ -26,6 +26,8 @@ export type SystemBaseConfig = {
   agentHealthCheckIntervalMinutes: number;
   agentHealthCheckConcurrency: number;
   wecomStateTtlMinutes: number;
+  loginMaxFailures: number;
+  loginLockoutMinutes: number;
 };
 
 export type NotificationChannel = {

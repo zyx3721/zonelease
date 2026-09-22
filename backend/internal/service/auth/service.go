@@ -84,8 +84,6 @@ type ResetNotifier interface {
 type Config struct {
 	SessionSecret         string
 	SessionTTL            time.Duration
-	LoginMaxFailures      int
-	LoginLockoutMinutes   int
 	ResetCodeTTL          time.Duration
 	ResetCaptchaTTL       time.Duration
 	ResetVerificationTTL  time.Duration
