@@ -268,7 +268,36 @@ vim .env               # at minimum set JWT_SECRET
 ./zonelease
 ```
 
-The backend listens on `127.0.0.1:8080` by default, runs migrations on first start and creates the default admin `admin / 123456`. For a persistent service, use systemd:
+The backend listens on `127.0.0.1:8080` by default, runs migrations on first start and creates the default admin `admin / 123456`.
+
+The backend also supports command-line flags; explicitly passed flags take precedence over environment variables and the `.env` file. `./zonelease -v` prints version info (version, commit, build date) and `./zonelease -h` lists all flags:
+
+| Flag | Equivalent env var | Description |
+| --- | --- | --- |
+| `-host` | `SERVER_HOST` | Backend listen address |
+| `-port` | `SERVER_PORT` | Backend listen port |
+| `-mode` | `SERVER_MODE` | Run mode `release` or `debug` |
+| `-db-host` | `DB_HOST` | PostgreSQL host |
+| `-db-port` | `DB_PORT` | PostgreSQL port |
+| `-db-name` | `DB_NAME` | PostgreSQL database name |
+| `-db-user` | `DB_USER` | PostgreSQL user |
+| `-db-password` | `DB_PASSWORD` | PostgreSQL password |
+| `-db-sslmode` | `DB_SSLMODE` | PostgreSQL SSL mode |
+| `-redis-addr` | `REDIS_ADDR` | Redis address |
+| `-redis-password` | `REDIS_PASSWORD` | Redis password |
+| `-redis-db` | `REDIS_DB` | Redis database index |
+| `-jwt-secret` | `JWT_SECRET` | Session token signing secret (password reset link HMAC) |
+| `-session-ttl` | `JWT_EXPIRE_HOURS` | Session lifetime in hours |
+| `-dns-sync-interval` | `RUNTIME_DNS_DEEP_SYNC_INTERVAL` | DNS deep sync interval (e.g. 1h, 1d) |
+| `-dhcp-sync-interval` | `RUNTIME_DHCP_DEEP_SYNC_INTERVAL` | DHCP deep sync interval (e.g. 1h, 1d) |
+| `-metric-retention-days` | `METRIC_RETENTION_DAYS` | Metric retention days |
+| `-log-retention-days` | `LOG_RETENTION_DAYS` | Log retention days |
+| `-metric-stream-maxlen` | `METRIC_STREAM_MAXLEN` | Redis metric stream max length |
+| `-cors-origin` | `CORS_ORIGIN` | Allowed CORS origin |
+| `-env` | none | Path to the `.env` config file |
+| `-v`, `-version` | none | Print version info and exit |
+
+For a persistent service, use systemd:
 
 ```ini
 # /etc/systemd/system/zonelease-backend.service

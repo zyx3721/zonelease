@@ -306,6 +306,41 @@ nohup go run cmd/server/main.go > app.log 2>&1 &
 
 后端服务默认运行在 `http://localhost:8080` ，如需指定地址和端口，请修改环境变量文件内的 `SERVER_HOST` 和 `SERVER_PORT` 参数。首次启动会自动创建数据库和默认管理员账户 `admin / 123456` 。
 
+4. 命令行参数（可选）：
+
+`go run cmd/server/main.go` 与编译后的后端二进制均支持命令行参数，显式传入的参数优先于环境变量与 `.env` 文件；`-v`（或 `-version`）可查看版本信息（版本、commit、构建时间），`-h` 查看全部参数：
+
+| 参数 | 等价环境变量 | 说明 |
+| --- | --- | --- |
+| `-host` | `SERVER_HOST` | 后端监听地址 |
+| `-port` | `SERVER_PORT` | 后端监听端口 |
+| `-mode` | `SERVER_MODE` | 运行模式 `release` 或 `debug` |
+| `-db-host` | `DB_HOST` | PostgreSQL 主机 |
+| `-db-port` | `DB_PORT` | PostgreSQL 端口 |
+| `-db-name` | `DB_NAME` | PostgreSQL 数据库名 |
+| `-db-user` | `DB_USER` | PostgreSQL 用户 |
+| `-db-password` | `DB_PASSWORD` | PostgreSQL 密码 |
+| `-db-sslmode` | `DB_SSLMODE` | PostgreSQL SSL 模式 |
+| `-redis-addr` | `REDIS_ADDR` | Redis 地址 |
+| `-redis-password` | `REDIS_PASSWORD` | Redis 密码 |
+| `-redis-db` | `REDIS_DB` | Redis 库编号 |
+| `-jwt-secret` | `JWT_SECRET` | 会话令牌签名密钥（找回密码链接签名） |
+| `-session-ttl` | `JWT_EXPIRE_HOURS` | 登录会话有效期（小时） |
+| `-dns-sync-interval` | `RUNTIME_DNS_DEEP_SYNC_INTERVAL` | DNS 深度同步间隔（如 1h、1d） |
+| `-dhcp-sync-interval` | `RUNTIME_DHCP_DEEP_SYNC_INTERVAL` | DHCP 深度同步间隔（如 1h、1d） |
+| `-metric-retention-days` | `METRIC_RETENTION_DAYS` | 指标数据保留天数 |
+| `-log-retention-days` | `LOG_RETENTION_DAYS` | 日志数据保留天数 |
+| `-metric-stream-maxlen` | `METRIC_STREAM_MAXLEN` | Redis 指标流最大长度 |
+| `-cors-origin` | `CORS_ORIGIN` | 允许的跨域来源 |
+| `-env` | 无 | 指定 `.env` 配置文件路径 |
+| `-v`、`-version` | 无 | 显示版本信息并退出 |
+
+例如前台运行并临时指定端口与会话有效期：
+
+```bash
+go run cmd/server/main.go -port 8090 -session-ttl 12
+```
+
 ## 2.5 前端配置与启动
 
 1. 进入前端目录下载相关依赖：

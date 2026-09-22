@@ -70,9 +70,14 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: 交叉编译 Backend 二进制文件
+        id: backend_build
         working-directory: backend
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
+          BUILD_VERSION=${GITHUB_REF_NAME}
+          BUILD_COMMIT=$(git rev-parse --short HEAD)
+          BUILD_DATE=$(TZ=Asia/Shanghai date +"%Y-%m-%dT%H:%M:%S%:z")
+          LDFLAGS="-s -w -X zonelease/backend/internal/buildinfo.Version=${BUILD_VERSION} -X zonelease/backend/internal/buildinfo.Commit=${BUILD_COMMIT} -X zonelease/backend/internal/buildinfo.BuildDate=${BUILD_DATE}"
           mkdir -p dist
 
           prepare_package() {
@@ -83,14 +88,14 @@ jobs:
           }
 
           echo "🔨 编译 Linux AMD64..."
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o zonelease ./cmd/server/main.go
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="${LDFLAGS}" -o zonelease ./cmd/server/main.go
           prepare_package "dist/linux_amd64"
           mv zonelease dist/linux_amd64/
           tar -czf dist/zonelease_${VERSION}_linux_amd64.tar.gz -C dist linux_amd64
           rm -rf dist/linux_amd64
 
           echo "🔨 编译 Linux ARM64..."
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o zonelease ./cmd/server/main.go
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="${LDFLAGS}" -o zonelease ./cmd/server/main.go
           prepare_package "dist/linux_arm64"
           mv zonelease dist/linux_arm64/
           tar -czf dist/zonelease_${VERSION}_linux_arm64.tar.gz -C dist linux_arm64
@@ -102,6 +107,8 @@ jobs:
           cd ..
 
           echo "✅ 编译完成"
+          echo "commit=${BUILD_COMMIT}" >> "$GITHUB_OUTPUT"
+          echo "build_date=${BUILD_DATE}" >> "$GITHUB_OUTPUT"
 
       - name: 交叉编译 DHCP Agent 二进制文件
         working-directory: dhcp-agent
@@ -204,6 +211,8 @@ jobs:
           provenance: false
           build-args: |
             APP_VERSION=${{ github.ref_name }}
+            APP_COMMIT=${{ steps.backend_build.outputs.commit }}
+            APP_BUILD_DATE=${{ steps.backend_build.outputs.build_date }}
             NPM_REGISTRY=https://registry.npmjs.org
             GOPROXY=https://proxy.golang.org,direct
 

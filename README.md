@@ -268,7 +268,36 @@ vim .env               # 至少设置 JWT_SECRET
 ./zonelease
 ```
 
-后端默认监听 `127.0.0.1:8080`，首次启动自动执行迁移并创建默认管理员 `admin / 123456`。需要常驻时交给 systemd：
+后端默认监听 `127.0.0.1:8080`，首次启动自动执行迁移并创建默认管理员 `admin / 123456`。
+
+后端同时支持命令行参数，显式传入的参数优先于环境变量与 `.env` 文件；`./zonelease -v` 可查看版本信息（版本、commit、构建时间），`./zonelease -h` 查看全部参数：
+
+| 参数 | 等价环境变量 | 说明 |
+| --- | --- | --- |
+| `-host` | `SERVER_HOST` | 后端监听地址 |
+| `-port` | `SERVER_PORT` | 后端监听端口 |
+| `-mode` | `SERVER_MODE` | 运行模式 `release` 或 `debug` |
+| `-db-host` | `DB_HOST` | PostgreSQL 主机 |
+| `-db-port` | `DB_PORT` | PostgreSQL 端口 |
+| `-db-name` | `DB_NAME` | PostgreSQL 数据库名 |
+| `-db-user` | `DB_USER` | PostgreSQL 用户 |
+| `-db-password` | `DB_PASSWORD` | PostgreSQL 密码 |
+| `-db-sslmode` | `DB_SSLMODE` | PostgreSQL SSL 模式 |
+| `-redis-addr` | `REDIS_ADDR` | Redis 地址 |
+| `-redis-password` | `REDIS_PASSWORD` | Redis 密码 |
+| `-redis-db` | `REDIS_DB` | Redis 库编号 |
+| `-jwt-secret` | `JWT_SECRET` | 会话令牌签名密钥（找回密码链接签名） |
+| `-session-ttl` | `JWT_EXPIRE_HOURS` | 登录会话有效期（小时） |
+| `-dns-sync-interval` | `RUNTIME_DNS_DEEP_SYNC_INTERVAL` | DNS 深度同步间隔（如 1h、1d） |
+| `-dhcp-sync-interval` | `RUNTIME_DHCP_DEEP_SYNC_INTERVAL` | DHCP 深度同步间隔（如 1h、1d） |
+| `-metric-retention-days` | `METRIC_RETENTION_DAYS` | 指标数据保留天数 |
+| `-log-retention-days` | `LOG_RETENTION_DAYS` | 日志数据保留天数 |
+| `-metric-stream-maxlen` | `METRIC_STREAM_MAXLEN` | Redis 指标流最大长度 |
+| `-cors-origin` | `CORS_ORIGIN` | 允许的跨域来源 |
+| `-env` | 无 | 指定 `.env` 配置文件路径 |
+| `-v`、`-version` | 无 | 显示版本信息并退出 |
+
+需要常驻时交给 systemd：
 
 ```ini
 # /etc/systemd/system/zonelease-backend.service

@@ -70,28 +70,36 @@ type CORSConfig struct {
 }
 
 func Load(logger *slog.Logger) (Config, error) {
+	return LoadWithOverrides(logger, nil)
+}
+
+// LoadWithOverrides 加载配置，overrides 中的非空值优先于对应环境变量，供命令行参数显式覆盖使用
+func LoadWithOverrides(logger *slog.Logger, overrides map[string]string) (Config, error) {
+	if overrides == nil {
+		overrides = map[string]string{}
+	}
 	cfg := Config{
 		Server: ServerConfig{
-			Host: env("SERVER_HOST", "127.0.0.1"),
-			Port: env("SERVER_PORT", "8080"),
-			Mode: env("SERVER_MODE", "release"),
+			Host: lookup(overrides, "server_host", "SERVER_HOST", "127.0.0.1"),
+			Port: lookup(overrides, "server_port", "SERVER_PORT", "8080"),
+			Mode: lookup(overrides, "server_mode", "SERVER_MODE", "release"),
 		},
 		Database: DatabaseConfig{
-			Host:     env("DB_HOST", "localhost"),
-			Port:     env("DB_PORT", "5432"),
-			Name:     env("DB_NAME", "zonelease"),
-			User:     env("DB_USER", "zonelease"),
-			Password: env("DB_PASSWORD", "zonelease_dev"),
-			SSLMode:  env("DB_SSLMODE", "disable"),
+			Host:     lookup(overrides, "db_host", "DB_HOST", "localhost"),
+			Port:     lookup(overrides, "db_port", "DB_PORT", "5432"),
+			Name:     lookup(overrides, "db_name", "DB_NAME", "zonelease"),
+			User:     lookup(overrides, "db_user", "DB_USER", "zonelease"),
+			Password: lookup(overrides, "db_password", "DB_PASSWORD", "zonelease_dev"),
+			SSLMode:  lookup(overrides, "db_sslmode", "DB_SSLMODE", "disable"),
 		},
 		Redis: RedisConfig{
-			Addr:     env("REDIS_ADDR", "localhost:6379"),
-			Password: os.Getenv("REDIS_PASSWORD"),
-			DB:       envIntAllowZero("REDIS_DB", 0),
+			Addr:     lookup(overrides, "redis_addr", "REDIS_ADDR", "localhost:6379"),
+			Password: lookupRaw(overrides, "redis_password", "REDIS_PASSWORD"),
+			DB:       lookupIntAllowZero(overrides, "redis_db", "REDIS_DB", 0),
 		},
 		Auth: AuthConfig{
-			SessionSecret:         os.Getenv("JWT_SECRET"),
-			SessionExpireHours:    envInt("JWT_EXPIRE_HOURS", defaultSessionHours),
+			SessionSecret:         lookupRaw(overrides, "jwt_secret", "JWT_SECRET"),
+			SessionExpireHours:    lookupInt(overrides, "jwt_expire_hours", "JWT_EXPIRE_HOURS", defaultSessionHours),
 			ResetCodeTTL:          10 * time.Minute,
 			ResetCaptchaTTL:       time.Minute,
 			ResetVerificationTTL:  10 * time.Minute,
@@ -99,14 +107,14 @@ func Load(logger *slog.Logger) (Config, error) {
 		},
 		Runtime: RuntimeConfig{
 			RefreshTTL:           2 * time.Minute,
-			DNSDeepSyncInterval:  envScheduleInterval("RUNTIME_DNS_DEEP_SYNC_INTERVAL", 24*time.Hour),
-			DHCPDeepSyncInterval: envScheduleInterval("RUNTIME_DHCP_DEEP_SYNC_INTERVAL", time.Hour),
-			MetricRetentionDays:  envInt("METRIC_RETENTION_DAYS", 30),
-			LogRetentionDays:     envInt("LOG_RETENTION_DAYS", 30),
-			MetricStreamMaxLen:   int64(envInt("METRIC_STREAM_MAXLEN", 10000)),
+			DNSDeepSyncInterval:  lookupScheduleInterval(overrides, "runtime_dns_deep_sync_interval", "RUNTIME_DNS_DEEP_SYNC_INTERVAL", 24*time.Hour),
+			DHCPDeepSyncInterval: lookupScheduleInterval(overrides, "runtime_dhcp_deep_sync_interval", "RUNTIME_DHCP_DEEP_SYNC_INTERVAL", time.Hour),
+			MetricRetentionDays:  lookupInt(overrides, "metric_retention_days", "METRIC_RETENTION_DAYS", 30),
+			LogRetentionDays:     lookupInt(overrides, "log_retention_days", "LOG_RETENTION_DAYS", 30),
+			MetricStreamMaxLen:   int64(lookupInt(overrides, "metric_stream_maxlen", "METRIC_STREAM_MAXLEN", 10000)),
 		},
 		CORS: CORSConfig{
-			Origin: env("CORS_ORIGIN", "http://localhost:5173"),
+			Origin: lookup(overrides, "cors_origin", "CORS_ORIGIN", "http://localhost:5173"),
 		},
 	}
 
@@ -174,6 +182,58 @@ func env(key string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+// lookup 按命令行覆盖值、环境变量、默认值的顺序解析字符串配置
+func lookup(overrides map[string]string, key, envName, fallback string) string {
+	if value := strings.TrimSpace(overrides[key]); value != "" {
+		return value
+	}
+	return env(envName, fallback)
+}
+
+// lookupRaw 解析不做空白修剪的配置值，环境变量路径保持原样读取，适用于密码与密钥
+func lookupRaw(overrides map[string]string, key, envName string) string {
+	if value := strings.TrimSpace(overrides[key]); value != "" {
+		return value
+	}
+	return os.Getenv(envName)
+}
+
+// lookupInt 按命令行覆盖值、环境变量、默认值的顺序解析正整数配置
+func lookupInt(overrides map[string]string, key, envName string, fallback int) int {
+	if value := strings.TrimSpace(overrides[key]); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed <= 0 {
+			return fallback
+		}
+		return parsed
+	}
+	return envInt(envName, fallback)
+}
+
+// lookupIntAllowZero 按命令行覆盖值、环境变量、默认值的顺序解析非负整数配置
+func lookupIntAllowZero(overrides map[string]string, key, envName string, fallback int) int {
+	if value := strings.TrimSpace(overrides[key]); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 0 {
+			return fallback
+		}
+		return parsed
+	}
+	return envIntAllowZero(envName, fallback)
+}
+
+// lookupScheduleInterval 按命令行覆盖值、环境变量、默认值的顺序解析调度间隔配置
+func lookupScheduleInterval(overrides map[string]string, key, envName string, fallback time.Duration) time.Duration {
+	if value := strings.TrimSpace(overrides[key]); value != "" {
+		parsed, err := parseScheduleDuration(value)
+		if err != nil || parsed < 0 {
+			return fallback
+		}
+		return parsed
+	}
+	return envScheduleInterval(envName, fallback)
 }
 
 func envInt(key string, fallback int) int {
