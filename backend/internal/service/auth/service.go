@@ -58,7 +58,7 @@ type Store interface {
 	RecordUserLogin(ctx context.Context, userID string) error
 	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
 	CreateSession(ctx context.Context, token string, userID string, provider string, expiresAt time.Time) error
-	FindSession(ctx context.Context, token string) (domain.User, string, time.Time, time.Time, error)
+	FindSession(ctx context.Context, token string) (domain.User, string, time.Time, error)
 	DeleteSession(ctx context.Context, token string) error
 	DeleteUserSessions(ctx context.Context, userID string) error
 	DeleteExpiredSessions(ctx context.Context) error
@@ -218,12 +218,12 @@ func (s *Service) Validate(ctx context.Context, token string) (domain.Session, e
 		return domain.Session{}, ErrInvalidSession
 	}
 	_ = s.store.DeleteExpiredSessions(ctx)
-	user, provider, expiresAt, lastSeenAt, err := s.store.FindSession(ctx, token)
+	user, provider, expiresAt, err := s.store.FindSession(ctx, token)
 	now := s.now()
 	if err != nil || !expiresAt.After(now) || user.Disabled {
 		return domain.Session{}, ErrInvalidSession
 	}
-	return domain.Session{Token: token, Provider: normalizeSessionProvider(provider), ExpiresAt: expiresAt, LastSeenAt: lastSeenAt, User: user}, nil
+	return domain.Session{Token: token, Provider: normalizeSessionProvider(provider), ExpiresAt: expiresAt, User: user}, nil
 }
 
 func (s *Service) Logout(ctx context.Context, token string) error {
@@ -266,7 +266,7 @@ func (s *Service) createSession(ctx context.Context, user domain.User, provider 
 	if err := s.store.RecordUserLogin(ctx, user.ID); err != nil {
 		return domain.Session{}, err
 	}
-	return domain.Session{Token: token, Provider: provider, ExpiresAt: expiresAt, LastSeenAt: now, User: user}, nil
+	return domain.Session{Token: token, Provider: provider, ExpiresAt: expiresAt, User: user}, nil
 }
 
 func normalizeSessionProvider(provider string) string {

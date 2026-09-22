@@ -4775,9 +4775,6 @@ const docTemplate = `{
                 "expires_at": {
                     "type": "string"
                 },
-                "last_seen_at": {
-                    "type": "string"
-                },
                 "provider": {
                     "type": "string"
                 },

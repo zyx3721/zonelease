@@ -23,7 +23,7 @@ export type AuthUser = {
 export type AuthSession = {
   token: string;
   expires_at: string;
-  last_seen_at: string;
+  
   user: AuthUser;
 };
 

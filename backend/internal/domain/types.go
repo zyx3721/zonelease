@@ -57,7 +57,6 @@ type Session struct {
 	Token      string    `json:"token"`
 	Provider   string    `json:"provider"`
 	ExpiresAt  time.Time `json:"expires_at"`
-	LastSeenAt time.Time `json:"last_seen_at"`
 	User       User      `json:"user"`
 }
 
