@@ -217,6 +217,9 @@ func (r *Router) passwordResetConfirm(w http.ResponseWriter, req *http.Request) 
 		writeError(w, statusFromErr(err), code, message)
 		return
 	}
+	if _, clearErr := r.auth.ClearLoginFailures(req.Context(), body.Username); clearErr != nil {
+		r.logger.Error("Clear login failures failed", "error", clearErr)
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

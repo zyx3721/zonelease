@@ -1588,7 +1588,7 @@ swag init -g cmd/server/main.go -o docs
   - 邮件媒介启用后会发送验证码邮件；未启用或发送失败时返回 `send_failed`
   - 安全时效由基础配置控制，同一账号在频率限制统计窗口内最多请求 5 次
   - 非 `release` 模式下响应会返回 `devCode` 便于本地调试
-- `POST /api/auth/password-reset/confirm` - 使用验证码重置本地账号密码
+- `POST /api/auth/password-reset/confirm` - 使用验证码重置本地账号密码，并解除该账号的登录失败锁定
   - 请求字段包含 `username`、`verificationToken`、`code`、`newPassword` 和 `confirmPassword`
   - 新密码至少 6 位，且两次输入必须一致
   - 重置成功后会删除该用户在 `sessions` 表中的所有登录会话
