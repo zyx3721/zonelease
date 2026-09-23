@@ -206,7 +206,7 @@ export function WecomQrLogin({ onSuccess }: WecomQrLoginProps) {
       title="企业微信扫码登录"
       onLoad={handleIframeLoad}
       className="w-full rounded-2xl"
-      style={{ height: 420, border: '1px solid var(--zl-border)', background: '#ffffff' }}
+      style={{ height: 380, border: '1px solid var(--zl-border)', background: '#ffffff' }}
     />
   );
 }
