@@ -149,7 +149,9 @@ export function LoginPage() {
     setWecomBusy(true);
     const loginRequest = loginTicket
       ? exchangeWecomTicket(loginTicket)
-      : loginByWecomCenterTicket(centerTicket ?? '');
+      : code && state
+        ? loginByWecomDirectCallback(code, state)
+        : loginByWecomCenterTicket(centerTicket ?? '');
     loginRequest
       .then(session => {
         finishWecomLogin(session);
