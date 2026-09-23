@@ -547,6 +547,9 @@ function pickTabPatch(config: SystemBaseConfig, tab: BaseTab): Partial<SystemBas
       resetCaptchaTtlMinutes: config.resetCaptchaTtlMinutes,
       passwordResetSendCooldownMinutes: config.passwordResetSendCooldownMinutes,
       passwordResetRateLimitMinutes: config.passwordResetRateLimitMinutes,
+      wecomStateTtlMinutes: config.wecomStateTtlMinutes,
+      loginMaxFailures: config.loginMaxFailures,
+      loginLockoutMinutes: config.loginLockoutMinutes,
     };
   }
   if (tab === 'sync') {
