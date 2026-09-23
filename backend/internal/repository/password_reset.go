@@ -11,6 +11,7 @@ import (
 type PasswordResetRequest struct {
 	TokenHash string
 	UserID    string
+	Username  string
 	UserEmail string
 	CodeHash  string
 	Channel   string
@@ -70,11 +71,11 @@ func (s *Store) CountRecentPasswordResetCodes(ctx context.Context, userID string
 func (s *Store) FindPasswordResetRequest(ctx context.Context, token string) (PasswordResetRequest, error) {
 	var item PasswordResetRequest
 	err := s.pool.QueryRow(ctx, `
-		SELECT r.token_hash, r.user_id::text, u.email, r.code_hash, r.channel, r.expires_at, r.used_at
+		SELECT r.token_hash, r.user_id::text, u.username, u.email, r.code_hash, r.channel, r.expires_at, r.used_at
 		FROM password_reset_requests r
 		JOIN users u ON u.id = r.user_id
 		WHERE token_hash=$1
-	`, HashToken(token)).Scan(&item.TokenHash, &item.UserID, &item.UserEmail, &item.CodeHash, &item.Channel, &item.ExpiresAt, &item.UsedAt)
+	`, HashToken(token)).Scan(&item.TokenHash, &item.UserID, &item.Username, &item.UserEmail, &item.CodeHash, &item.Channel, &item.ExpiresAt, &item.UsedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return item, ErrNotFound
 	}

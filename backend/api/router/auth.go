@@ -161,7 +161,7 @@ func (r *Router) passwordResetSend(w http.ResponseWriter, req *http.Request) {
 	if !decode(w, req, &body) {
 		return
 	}
-	cooldown, code, err := r.auth.SendResetCode(req.Context(), body.VerificationToken, body.Channel, body.VerifyEmail)
+	cooldown, code, err := r.auth.SendResetCode(req.Context(), body.VerificationToken, body.Channel, body.VerifyEmail, repository.ClientIP(req))
 	if err != nil {
 		message := "发送验证码失败"
 		if errors.Is(err, authsvc.ErrResetEmailMismatch) {

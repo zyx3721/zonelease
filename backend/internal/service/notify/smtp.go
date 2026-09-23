@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"html"
 	"net"
 	"net/mail"
 	"net/smtp"
@@ -225,5 +226,5 @@ func passwordResetEmailHTML(message PasswordResetMessage) string {
 <table role="presentation" width="560" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #e4e9f2;border-radius:14px;overflow:hidden;">
 <tr><td style="padding:28px 32px 18px;background:#0f766e;color:#ffffff;"><div style="font-size:20px;font-weight:700;">ZoneLease 密码找回</div><div style="margin-top:8px;font-size:13px;opacity:.86;">请使用以下验证码完成密码重置</div></td></tr>
 <tr><td style="padding:30px 32px;"><div style="font-size:14px;color:#526071;">账号</div><div style="margin-top:6px;font-size:18px;font-weight:700;color:#172033;">%s</div><div style="margin-top:24px;padding:18px 20px;border-radius:12px;background:#ecfdf5;border:1px solid #a7f3d0;text-align:center;"><div style="font-size:13px;color:#047857;">验证码</div><div style="margin-top:8px;font-size:34px;letter-spacing:8px;font-weight:800;color:#065f46;">%s</div></div><div style="margin-top:22px;font-size:14px;line-height:1.8;color:#526071;">有效期至：<strong style="color:#172033;">%s</strong><br>请求来源：<strong style="color:#172033;">%s</strong></div><div style="margin-top:24px;padding:14px 16px;border-radius:10px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;font-size:13px;line-height:1.7;">如果不是您本人操作，请忽略本邮件并检查平台账号安全。</div></td></tr>
-</table></td></tr></table></body></html>`, username, message.Code, message.ExpiresAt.Local().Format("2006-01-02 15:04:05"), requestIP)
+</table></td></tr></table></body></html>`, html.EscapeString(username), html.EscapeString(message.Code), html.EscapeString(message.ExpiresAt.Local().Format("2006-01-02 15:04:05")), html.EscapeString(requestIP))
 }

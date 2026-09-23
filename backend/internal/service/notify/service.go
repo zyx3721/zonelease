@@ -52,11 +52,7 @@ func New(store ChannelStore) *Service {
 	return &Service{store: store, http: &http.Client{Timeout: 8 * time.Second}, now: time.Now}
 }
 
-func (s *Service) SendPasswordResetCode(ctx context.Context, to, code string) error {
-	return s.SendPasswordReset(ctx, to, code, s.now().Add(10*time.Minute))
-}
-
-func (s *Service) SendPasswordReset(ctx context.Context, to, code string, expiresAt time.Time) error {
+func (s *Service) SendPasswordReset(ctx context.Context, to, username, code string, expiresAt time.Time, requestIP string) error {
 	channel, err := s.store.GetPasswordResetNotificationChannel(ctx)
 	if err != nil {
 		return err
@@ -64,7 +60,7 @@ func (s *Service) SendPasswordReset(ctx context.Context, to, code string, expire
 	if !channel.PasswordResetEnabled {
 		return ErrNotificationChannelDisabled
 	}
-	return s.SendPasswordResetMessage(ctx, channel, PasswordResetMessage{Code: code, ExpiresAt: expiresAt, To: to})
+	return s.SendPasswordResetMessage(ctx, channel, PasswordResetMessage{Username: username, Code: code, ExpiresAt: expiresAt, RequestIP: requestIP, To: to})
 }
 
 func (s *Service) SendPasswordResetMessage(ctx context.Context, channel domain.NotificationChannel, message PasswordResetMessage) error {

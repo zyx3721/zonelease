@@ -65,7 +65,7 @@ func (s *Service) VerifyResetIdentity(ctx context.Context, username, captchaToke
 	return token, channels, nil
 }
 
-func (s *Service) SendResetCode(ctx context.Context, verificationToken, channel, verifyEmail string) (int, string, error) {
+func (s *Service) SendResetCode(ctx context.Context, verificationToken, channel, verifyEmail, requestIP string) (int, string, error) {
 	req, err := s.store.FindPasswordResetRequest(ctx, verificationToken)
 	if err != nil || req.UsedAt != nil || !req.ExpiresAt.After(s.now()) {
 		return 0, "", ErrInvalidResetToken
@@ -89,7 +89,7 @@ func (s *Service) SendResetCode(ctx context.Context, verificationToken, channel,
 		return 0, "", err
 	}
 	if s.notifier != nil {
-		if err := s.notifier.SendPasswordReset(ctx, strings.TrimSpace(verifyEmail), code, s.now().Add(cfg.ResetCodeTTL)); err != nil {
+		if err := s.notifier.SendPasswordReset(ctx, strings.TrimSpace(verifyEmail), req.Username, code, s.now().Add(cfg.ResetCodeTTL), requestIP); err != nil {
 			return 0, "", err
 		}
 	}

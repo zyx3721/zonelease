@@ -77,8 +77,7 @@ type Store interface {
 }
 
 type ResetNotifier interface {
-	SendPasswordResetCode(ctx context.Context, to, code string) error
-	SendPasswordReset(ctx context.Context, to, code string, expiresAt time.Time) error
+	SendPasswordReset(ctx context.Context, to, username, code string, expiresAt time.Time, requestIP string) error
 }
 
 type Config struct {
