@@ -92,6 +92,7 @@ export function isAuthenticated() {
 export function persistSession(session: AuthSession) {
   const store = storage();
   if (!store) return;
+  clearAuthExpiredFlag();
   store.setItem(TOKEN_KEY, session.token);
   store.setItem(USER_KEY, JSON.stringify(session.user));
   store.setItem(EXPIRES_AT_KEY, session.expires_at);
@@ -110,8 +111,8 @@ export function clearSession() {
 const AUTH_EXPIRED_FLAG_KEY = 'zonelease.auth.expired';
 let authRedirectingToLogin = false;
 
-// markAuthExpired 标记本次进入登录页由会话失效引起：仅认证请求收到 401 时调用，
-// 登录页挂载时消费该标记并提示重新登录；主动登出与未登录访问不产生标记
+// markAuthExpired 标记本次进入登录页由会话失效引起：仅携带令牌的认证请求收到 401 时调用，
+// 登录页挂载时消费该标记并提示重新登录；主动登出、未登录访问与登录类接口的凭据错误不产生标记
 export function markAuthExpired() {
   if (typeof window === 'undefined') return;
   try {
@@ -129,6 +130,15 @@ export function consumeAuthExpired() {
     return expired;
   } catch {
     return false;
+  }
+}
+
+// clearAuthExpiredFlag 清除尚未消费的会话失效标记：登录成功与主动登出后残留标记不再引发误提示
+export function clearAuthExpiredFlag() {
+  try {
+    sessionStorage.removeItem(AUTH_EXPIRED_FLAG_KEY);
+  } catch {
+    return;
   }
 }
 
@@ -194,9 +204,9 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
   if (!response.ok) {
     const message = await readApiError(response);
     if (options.auth !== false && response.status === 401) {
-      markAuthExpired();
       markAuthRedirecting();
       clearSession();
+      if (token) markAuthExpired();
       if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
         window.location.assign('/login');
       }
@@ -212,6 +222,7 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
 export async function login(username: string, password: string, provider = 'local') {
   const session = await api<AuthSession>('/api/auth/login', {
     method: 'POST',
+    auth: false,
     body: JSON.stringify({ username, password, provider }),
   });
   persistSession(session);
@@ -357,6 +368,7 @@ export async function logout(options: LogoutOptions = {}) {
   const token = getAuthToken();
   pendingCurrentUser = null;
   cachedCurrentUser = null;
+  clearAuthExpiredFlag();
   clearSession();
   if (!token) return;
 

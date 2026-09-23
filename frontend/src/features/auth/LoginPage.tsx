@@ -74,12 +74,6 @@ export function LoginPage() {
   }, []);
 
   useEffect(() => {
-    if (consumeAuthExpired()) {
-      toast.error('登录会话已过期，请重新登录');
-    }
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
     if (getAuthToken() && !hasWecomCallbackParams()) {
       void fetchCurrentUser()
