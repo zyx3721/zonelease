@@ -69,7 +69,7 @@ export function wecomRequiredFields(mode: WecomMode): SettingsField[] {
 export const WECOM_DIRECT_GUIDANCE =
   '配置步骤：企业微信管理后台 →「应用管理」→ 自建应用（记录 AgentID 与 Secret）→' +
   '在「网页授权及 JS-SDK」中把回调域名加入可信域名 → 在「企业可信 IP」中加入本服务出口 IP。' +
-  '扫码确认后企业微信会携带授权码跳转至「回调地址前缀 + /login」完成登录或绑定。';
+  '扫码确认后由企微官方登录面板回调授权码，本系统自动完成登录或绑定。';
 
 export const WECOM_CENTER_GUIDANCE =
   '配置步骤：部署企业微信统一认证中心（wecom-auth-center）→ 在认证中心 config.yaml 的 apps 下为本系统新增条目：' +
@@ -126,4 +126,3 @@ function removeEmpty(config: Record<string, unknown>) {
     })
   );
 }
-
