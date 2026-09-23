@@ -193,7 +193,7 @@ func (r *Router) wecomLogin(w http.ResponseWriter, req *http.Request) {
 	session, err := r.auth.LoginByWecom(req.Context(), wecomProviderID, identity)
 	if err != nil {
 		if errors.Is(err, authsvc.ErrWecomNotBound) {
-			writeError(w, http.StatusUnauthorized, "user_not_bound", "该企业微信账号尚未绑定平台用户，请先登录后在用户菜单绑定企业微信")
+			writeError(w, http.StatusUnauthorized, "user_not_bound", "该企业微信账号尚未绑定系统用户")
 			return
 		}
 		if errors.Is(err, authsvc.ErrUserNotProvisioned) {
