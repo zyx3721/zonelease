@@ -1038,6 +1038,24 @@ definitions:
       verificationToken:
         type: string
     type: object
+  router.wecomAuthorizeEmbed:
+    properties:
+      auth_mode:
+        type: string
+      callback_path:
+        type: string
+      iframe_url:
+        type: string
+      state:
+        type: string
+    type: object
+  router.wecomAuthorizeResponse:
+    properties:
+      embed:
+        $ref: '#/definitions/router.wecomAuthorizeEmbed'
+      url:
+        type: string
+    type: object
   router.wecomAuthorizeURLResponse:
     properties:
       url:
@@ -1061,6 +1079,15 @@ definitions:
     type: object
   router.wecomExchangeRequest:
     properties:
+      ticket:
+        type: string
+    type: object
+  router.wecomLoginRequest:
+    properties:
+      code:
+        type: string
+      state:
+        type: string
       ticket:
         type: string
     type: object
@@ -1275,17 +1302,22 @@ paths:
       - Auth
   /api/auth/wecom/authorize:
     get:
-      description: 无需登录。企业微信认证启用后，302 跳转到企业微信授权页（直连模式，携带防伪 state，有效期取基础配置的企业微信扫码有效期）或统一认证中心登录页（认证中心模式）；未启用或配置不完整时同样
-        302 回前端登录页并携带 wecomError。
+      description: 无需登录。企业微信认证启用后返回整页跳转地址与内嵌二维码渲染参数：直连模式签发防伪 state（有效期取基础配置的企业微信扫码有效期），url
+        的回跳指向后端回调，embed.iframe_url 的回跳指向前端中转路由 /wecom-qr-callback；认证中心模式返回认证中心登录入口。登录页默认以
+        iframe 内嵌渲染二维码，配置异常时回退整页跳转；未启用或配置不完整时返回错误。
       produces:
       - application/json
       responses:
-        "302":
-          description: 授权跳转地址
+        "200":
+          description: OK
           schema:
-            type: string
+            $ref: '#/definitions/router.wecomAuthorizeResponse'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/router.errorDocResponse'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/router.errorDocResponse'
         "503":
@@ -1429,15 +1461,15 @@ paths:
     post:
       consumes:
       - application/json
-      description: 无需登录。认证中心回调路径配置为前端登录页时，前端持认证中心 ticket 调用本接口换取会话；仅统一认证中心模式可用，账号未绑定时返回
-        user_not_bound。
+      description: 无需登录。直连模式提交 code 与防伪 state 换取会话（登录页内嵌二维码扫码回跳后由父页面调用）；认证中心模式提交认证中心
+        ticket 换取会话（认证中心回调路径配置为前端中转路由或登录页时使用）。账号未绑定时返回 user_not_bound。
       parameters:
-      - description: 认证中心 ticket
+      - description: 登录参数：直连模式 code + state，认证中心模式 ticket
         in: body
         name: body
         required: true
         schema:
-          $ref: '#/definitions/router.wecomExchangeRequest'
+          $ref: '#/definitions/router.wecomLoginRequest'
       produces:
       - application/json
       responses:
@@ -1453,7 +1485,7 @@ paths:
           description: Unauthorized
           schema:
             $ref: '#/definitions/router.errorDocResponse'
-      summary: 企业微信统一认证中心票据登录
+      summary: 企业微信扫码票据登录
       tags:
       - Auth
   /api/auth/wecom/unbind:

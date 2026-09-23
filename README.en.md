@@ -495,7 +495,7 @@ Fill in the LDAP connection parameters under "System settings → Authentication
 
 **How do I enable WeCom QR login?**
 
-Under "System settings → Authentication → WeCom", pick a mode: **Direct WeCom** needs a self-built app in the WeCom admin console (corpid, AgentID, Secret) with this system's domain added as a trusted callback domain and the server IP added to trusted IPs; **Unified auth center** needs the wecom-auth-center URL, app ID and app secret, with `domain` and `callback_path: /login` configured on the auth-center side. Users sign in with password first, bind their WeCom account from the user menu, and can then use QR login — only WeCom accounts bound to a platform user can sign in.
+Under "System settings → Authentication → WeCom", pick a mode: **Direct WeCom** needs a self-built app in the WeCom admin console (corpid, AgentID, Secret) with this system's domain added as a trusted callback domain and the server IP added to trusted IPs; once WeCom is selected on the login page, the QR code is rendered inline by default and falls back to full-page redirection when the embedded mode is unavailable. **Unified auth center** needs the wecom-auth-center URL, app ID and app secret, with `domain` and `callback_path: /wecom-qr-callback` configured on the auth-center side (a transfer route shared by the embedded QR code and full-page redirection; the auth-center login page must allow being embedded in an iframe by this system, otherwise the login page falls back to full-page redirection). Users sign in with password first, bind their WeCom account from the user menu, and can then use QR login — only WeCom accounts bound to a platform user can sign in.
 
 **An agent shows Offline — what now?**
 

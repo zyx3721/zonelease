@@ -25,11 +25,23 @@ const (
 	wecomStatePurposeLogin = "login"
 	wecomStatePurposeBind  = "bind"
 	wecomCallbackPath      = "/api/auth/wecom/callback"
+	wecomEmbedCallbackPath = "/wecom-qr-callback"
 	wecomMaxRequestBodyKB  = 4
+)
+
+const (
+	wecomEmbedAuthModeDirect = "direct"
+	wecomEmbedAuthModeSSO    = "sso"
 )
 
 type wecomExchangeRequest struct {
 	Ticket string `json:"ticket"`
+}
+
+type wecomLoginRequest struct {
+	Code   string `json:"code,omitempty"`
+	State  string `json:"state,omitempty"`
+	Ticket string `json:"ticket,omitempty"`
 }
 
 type wecomBindRequest struct {
@@ -42,34 +54,63 @@ type wecomAuthorizeURLResponse struct {
 	URL string `json:"url"`
 }
 
+// wecomAuthorizeEmbed 内嵌二维码登录参数：iframe 地址与回跳路径，直连模式附带签名 state
+type wecomAuthorizeEmbed struct {
+	AuthMode     string `json:"auth_mode"`
+	IframeURL    string `json:"iframe_url"`
+	State        string `json:"state,omitempty"`
+	CallbackPath string `json:"callback_path"`
+}
+
+// wecomAuthorizeResponse 登录跳转地址与内嵌二维码参数，embed 为空表示仅支持整页跳转
+type wecomAuthorizeResponse struct {
+	URL   string               `json:"url"`
+	Embed *wecomAuthorizeEmbed `json:"embed,omitempty"`
+}
+
 type wecomBindingResponse struct {
 	Bound       bool   `json:"bound"`
 	WecomUserid string `json:"wecomUserid,omitempty"`
 }
 
 // wecomAuthorize GET /api/auth/wecom/authorize
-// 登录入口：直连模式签发防伪 state 后跳企微授权页；统一认证中心模式跳认证中心 /login。
-// 未启用或配置不完整时 302 回前端登录页并携带 wecomError，避免浏览器展示裸 JSON 错误。
+// 登录入口：返回整页跳转地址与内嵌二维码渲染参数 embed；直连模式签发防伪 state，
+// 统一认证中心模式复用认证中心入口地址。未启用或配置不完整时返回错误，由前端回退提示。
 func (r *Router) wecomAuthorize(w http.ResponseWriter, req *http.Request) {
 	client, cfg, err := r.enabledWecomClient(req)
 	if err != nil {
 		r.logger.Warn("Wecom authorize unavailable", "error", err)
-		r.redirectWecomError(w, req, cfg, wecomErrorFromSetup(err))
+		r.writeWecomSetupError(w, err)
 		return
 	}
-	var authorizeURL string
-	if cfg.Mode == authsvc.WecomModeDirect {
-		state, err := r.signWecomState(wecomStatePurposeLogin, "", req.Context())
-		if err != nil {
-			r.logger.Error("Sign wecom state failed", "error", err)
-			r.redirectWecomError(w, req, cfg, wecomErrorLoginFailed)
-			return
-		}
-		authorizeURL = client.AuthorizeURL(wecomExternalBase(req, cfg.RedirectPrefix)+wecomCallbackPath, state)
-	} else {
-		authorizeURL = client.AuthorizeURL("", "")
+	payload, err := r.wecomAuthorizePayload(req, client, cfg)
+	if err != nil {
+		r.logger.Error("Sign wecom state failed", "error", err)
+		writeError(w, http.StatusInternalServerError, wecomErrorLoginFailed, "生成企业微信登录参数失败，请稍后重试")
+		return
 	}
-	http.Redirect(w, req, authorizeURL, http.StatusFound)
+	writeJSON(w, http.StatusOK, payload)
+}
+
+// wecomAuthorizePayload 构造企业微信扫码登录跳转地址与内嵌二维码参数：
+// 直连模式区分整页回跳与内嵌中转路由回跳，认证中心模式复用认证中心入口地址。
+func (r *Router) wecomAuthorizePayload(req *http.Request, client authsvc.WecomClient, cfg authsvc.WecomConfig) (wecomAuthorizeResponse, error) {
+	if cfg.Mode == authsvc.WecomModeCenter {
+		target := client.AuthorizeURL("", "")
+		return wecomAuthorizeResponse{
+			URL:   target,
+			Embed: &wecomAuthorizeEmbed{AuthMode: wecomEmbedAuthModeSSO, IframeURL: target, CallbackPath: wecomEmbedCallbackPath},
+		}, nil
+	}
+	state, err := r.signWecomState(wecomStatePurposeLogin, "", req.Context())
+	if err != nil {
+		return wecomAuthorizeResponse{}, err
+	}
+	base := wecomExternalBase(req, cfg.RedirectPrefix)
+	return wecomAuthorizeResponse{
+		URL:   client.AuthorizeURL(base+wecomCallbackPath, state),
+		Embed: &wecomAuthorizeEmbed{AuthMode: wecomEmbedAuthModeDirect, IframeURL: client.AuthorizeURL(base+wecomEmbedCallbackPath, state), State: state, CallbackPath: wecomEmbedCallbackPath},
+	}, nil
 }
 
 // wecomCallback GET /api/auth/wecom/callback
@@ -117,22 +158,33 @@ func (r *Router) wecomCallback(w http.ResponseWriter, req *http.Request) {
 }
 
 // wecomLogin POST /api/auth/wecom/login
-// 认证中心回调路径配置为前端登录页时，前端持认证中心 ticket 调用本接口直接换取会话。
+// 免登录取会话接口：直连模式提交 code 与防伪 state（内嵌二维码扫码回跳后由父页面调用），
+// 认证中心模式提交认证中心 ticket。成功后返回正式会话。
 func (r *Router) wecomLogin(w http.ResponseWriter, req *http.Request) {
 	client, cfg, err := r.enabledWecomClient(req)
 	if err != nil {
 		r.writeWecomSetupError(w, err)
 		return
 	}
-	if cfg.Mode != authsvc.WecomModeCenter {
-		writeError(w, http.StatusBadRequest, "invalid_mode", "当前并非统一认证中心模式，请使用扫码登录入口")
-		return
-	}
-	var body wecomExchangeRequest
+	var body wecomLoginRequest
 	if !decodeWithLimit(w, req, &body, wecomMaxRequestBodyKB) {
 		return
 	}
-	identity, err := client.Exchange(req.Context(), body.Ticket)
+	var credential string
+	if cfg.Mode == authsvc.WecomModeDirect {
+		credential, err = r.wecomDirectLoginCredential(body.State, body.Code)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "invalid_state", "登录状态无效或已过期，请重新发起企业微信登录")
+			return
+		}
+	} else {
+		if strings.TrimSpace(body.Ticket) == "" {
+			writeError(w, http.StatusBadRequest, "invalid_request", "登录票据不能为空")
+			return
+		}
+		credential = body.Ticket
+	}
+	identity, err := client.Exchange(req.Context(), credential)
 	if err != nil {
 		r.logger.Warn("Wecom center ticket login failed", "error", err)
 		writeError(w, http.StatusUnauthorized, "invalid_ticket", wecomBindFailureMessage(err))
@@ -299,24 +351,32 @@ func (r *Router) enabledWecomClient(req *http.Request) (authsvc.WecomClient, aut
 func (r *Router) resolveWecomIdentity(req *http.Request, client authsvc.WecomClient, cfg authsvc.WecomConfig) (authsvc.WecomIdentity, error) {
 	query := req.URL.Query()
 	if cfg.Mode == authsvc.WecomModeDirect {
-		state := query.Get("state")
-		claims, status := verifyWecomStateAt(state, r.cfg.Auth.SessionSecret, time.Now())
-		switch status {
-		case wecomStateInvalid:
-			return authsvc.WecomIdentity{}, errors.New("wecom state invalid")
-		case wecomStateExpired:
-			return authsvc.WecomIdentity{}, errors.New("wecom state expired")
+		code, err := r.wecomDirectLoginCredential(query.Get("state"), query.Get("code"))
+		if err != nil {
+			return authsvc.WecomIdentity{}, err
 		}
-		if claims.Purpose != wecomStatePurposeLogin {
-			return authsvc.WecomIdentity{}, errors.New("wecom state invalid")
-		}
-		return client.Exchange(req.Context(), query.Get("code"))
+		return client.Exchange(req.Context(), code)
 	}
 	ticket := strings.TrimSpace(query.Get("ticket"))
 	if ticket == "" {
 		return authsvc.WecomIdentity{}, errors.New("wecom ticket missing")
 	}
 	return client.Exchange(req.Context(), ticket)
+}
+
+// wecomDirectLoginCredential 校验直连登录防伪 state 并返回授权码；state 缺失、伪造、过期或授权码为空时返回错误
+func (r *Router) wecomDirectLoginCredential(state, code string) (string, error) {
+	claims, status := verifyWecomStateAt(state, r.cfg.Auth.SessionSecret, time.Now())
+	switch status {
+	case wecomStateExpired:
+		return "", errors.New("wecom state expired")
+	case wecomStateInvalid:
+		return "", errors.New("wecom state invalid")
+	}
+	if claims.Purpose != wecomStatePurposeLogin || strings.TrimSpace(code) == "" {
+		return "", errors.New("wecom state invalid")
+	}
+	return code, nil
 }
 
 func (r *Router) writeWecomSetupError(w http.ResponseWriter, err error) {

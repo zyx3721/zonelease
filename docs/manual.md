@@ -150,7 +150,7 @@ zonelease/
 │       │   ├── dhcp/                 # DHCP 管理页作用域、排除范围、保留地址创建 / 编辑和导出组件
 │       │   └── system/               # 系统配置中心、基础配置、Agent 判定、用户/群组/角色、AD/LDAP 与企业微信认证和邮件配置面板
 │       ├── lib/                      # API 客户端、认证、品牌基础配置快照、刷新事件、错误处理和工具函数
-│       ├── routes/                   # TanStack Router 文件路由，包含仪表板、DNS、DHCP、审计和设置页面
+│       ├── routes/                   # TanStack Router 文件路由，包含仪表板、DNS、DHCP、审计、设置、登录、忘记密码与企微扫码回跳中转页面
 │       ├── routeTree.gen.ts          # TanStack Router 自动生成路由树
 │       ├── router.tsx                # 前端路由实例
 │       ├── server.ts                 # React Start 自定义服务端入口
@@ -1194,13 +1194,13 @@ C:\dhcp-agent
 
 后端首次启动且用户表为空时会创建 `admin / 123456` 默认管理员。登录后可在右上角用户菜单中修改密码；修改成功后前端会清除当前会话并返回登录页。
 
-启用企业微信认证后，登录页「登录方式」下拉会出现「企业微信」选项；选中后登录表单切换为企业微信扫码卡片，点击「企业微信扫码登录」按钮跳转授权页，扫码确认后自动登录。已登录用户可在右上角用户菜单使用「绑定企微 / 解绑企微」。企业微信账号必须先绑定平台用户才能扫码登录，绑定冲突（同一企微账号绑定多个用户）会被拒绝并提示。接入模式分为两种：
+启用企业微信认证后，登录页「登录方式」下拉会出现「企业微信」选项；选中后登录表单默认在页面内内嵌渲染企业微信扫码二维码，扫码确认后自动登录，全程不离开登录页；内嵌二维码不可用（未启用、配置异常或加载失败）时自动回退为整页跳转按钮。已登录用户可在右上角用户菜单使用「绑定企微 / 解绑企微」。企业微信账号必须先绑定平台用户才能扫码登录，绑定冲突（同一企微账号绑定多个用户）会被拒绝并提示。接入模式分为两种：
 
-- **直连企业微信**：后端签发防伪 `state`（携带用途与绑定发起用户，有效期取基础配置的「企业微信扫码有效期」，默认 5 分钟、范围 1-60 分钟）并跳转企业微信授权页，扫码后由后端用授权码换取用户身份；企业 ID、应用 AgentID 和应用 Secret 保存本平台。
+- **直连企业微信**：后端签发防伪 `state`（携带用途与绑定发起用户，有效期取基础配置的「企业微信扫码有效期」，默认 5 分钟、范围 1-60 分钟）并跳转企业微信授权页，扫码后由后端用授权码换取用户身份；登录页内嵌二维码的回跳指向前端中转路由 `/wecom-qr-callback`，整页跳转的回跳仍指向后端回调 `/api/auth/wecom/callback`；企业 ID、应用 AgentID 和应用 Secret 保存本平台。
 - **统一认证中心**：跳转 wecom-auth-center 完成企微扫码后携带一次性 `ticket` 回跳，后端使用应用对接密钥签名调用认证中心 `/api/verify` 换取身份；企微凭据集中保管在认证中心。
-- 认证中心模式下，需在认证中心 `config.yaml` 的 `apps` 中为本系统登记 `domain`（zonelease 对外地址）与 `callback_path`，并使 `appId` / `appSecret` 与两侧配置一致；`callback_path` 建议配置为 `/login`（前端登录页，登录与绑定都走前端回调），配置为 `/api/auth/wecom/callback` 时仅支持登录不支持绑定。
+- 认证中心模式下，需在认证中心 `config.yaml` 的 `apps` 中为本系统登记 `domain`（zonelease 对外地址）与 `callback_path`，并使 `appId` / `appSecret` 与两侧配置一致；`callback_path` 建议配置为 `/wecom-qr-callback`（前端中转路由，内嵌二维码与整页跳转共用，顶层整页回跳自动转发登录页；认证中心登录页需允许被本系统以 iframe 嵌入，未配置时登录页自动回退整页跳转），配置为 `/login` 时走登录页前端回调（内嵌不可用时自动回退），配置为 `/api/auth/wecom/callback` 时仅支持登录不支持绑定。
 
-两种模式的后端回调链路会先建立会话并签发 60 秒一次性登录票据，再重定向回登录页由前端调用 `POST /api/auth/wecom/exchange` 换取正式会话；认证中心回调路径配置为 `/login` 时，前端直接调用 `POST /api/auth/wecom/login` 用 ticket 换取会话。
+整页跳转的后端回调链路会先建立会话并签发 60 秒一次性登录票据，再重定向回登录页由前端调用 `POST /api/auth/wecom/exchange` 换取正式会话；登录页内嵌二维码扫码确认后由父页面直接调用 `POST /api/auth/wecom/login`（直连模式提交 `code` 与 `state`，认证中心模式提交 `ticket`）换取会话；绑定流程保持不变，已登录用户仍按原有整页流程在绑定弹窗中完成。
 
 找回密码流程包含图形验证码、身份校验、邮箱验证码发送和密码重置四步。图形验证码 Token 使用 `JWT_SECRET` 签名并携带过期时间，不写入 Redis；生产环境必须使用 `SERVER_MODE=release`，并在「系统配置」中的「邮件媒介」启用找回密码发送。
 
@@ -1540,9 +1540,10 @@ swag init -g cmd/server/main.go -o docs
   - 新密码至少 6 位，且不能与旧密码相同
   - 修改成功后写入 `Changed password` 审计记录
 
-- `GET /api/auth/wecom/authorize` - 发起企业微信登录，302 跳转到企业微信授权页（直连模式，携带 `JWT_SECRET` 签名的防伪 state）或统一认证中心登录页（认证中心模式）
-  - 直连模式 state 携带用途与有效期，有效期取基础配置的「企业微信扫码有效期」（默认 5 分钟，范围 1-60 分钟）
-  - 未启用或配置不完整时 302 回前端登录页并携带 `wecomError`
+- `GET /api/auth/wecom/authorize` - 生成企业微信 Web 扫码登录页地址（含防伪 state）与内嵌二维码渲染参数（`iframe_url`、回跳路径 `/wecom-qr-callback`），登录页默认内嵌渲染二维码，配置异常时自动回退整页跳转；需已启用企业微信认证，无需认证
+  - 直连模式签发防伪 state，state 携带用途与有效期，有效期取基础配置的「企业微信扫码有效期」（默认 5 分钟，范围 1-60 分钟）；`url` 的回跳指向后端回调，`embed.iframe_url` 的回跳指向前端中转路由 `/wecom-qr-callback`
+  - 认证中心模式 `url` 与 `embed.iframe_url` 均为认证中心登录入口
+  - 未启用或配置不完整时返回 404 / 503 错误
   - 直连模式回调地址按配置的 `redirectPrefix` 推断，未配置时按 `X-Forwarded-Proto` / `X-Forwarded-Host` 或当前请求地址推断
 - `GET /api/auth/wecom/callback` - 企业微信登录回调
   - 直连模式校验防伪 state 后用授权码换取企业微信 userid
@@ -1555,9 +1556,10 @@ swag init -g cmd/server/main.go -o docs
 - `POST /api/auth/wecom/exchange` - 交换企业微信登录票据
   - 请求字段为 `ticket`；票据取出即删，60 秒有效
   - 成功返回与会话结构一致的 Token、认证来源 `wecom`、用户信息、最长过期时间和最近活跃时间
-- `POST /api/auth/wecom/login` - 统一认证中心票据登录
-  - 认证中心回调路径配置为前端登录页（`callback_path: /login`）时，前端持认证中心 ticket 调用本接口换取会话
-  - 仅统一认证中心模式可用；账号未绑定时返回 `user_not_bound`
+- `POST /api/auth/wecom/login` - 企业微信扫码票据登录
+  - 直连模式提交 `code` 与防伪 `state` 换取会话（登录页内嵌二维码扫码回跳中转路由后由父页面调用）
+  - 认证中心模式提交 `ticket` 换取会话（认证中心回调路径配置为前端中转路由或登录页时使用）
+  - 账号未绑定时返回 `user_not_bound`
 - `GET /api/auth/wecom/bind-url` - 获取企业微信绑定授权地址
   - 需要登录；直连模式返回的 state 携带绑定用途与当前用户 ID，回跳前端登录页
 - `POST /api/auth/wecom/bind` - 绑定企业微信

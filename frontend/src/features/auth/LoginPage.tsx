@@ -1,6 +1,6 @@
 import { Link, useNavigate } from '@tanstack/react-router';
 import { Eye, EyeOff, Loader2, Lock, Moon, QrCode, Sun, User } from 'lucide-react';
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { AppTooltip } from '@/components/app-tooltip';
 import {
@@ -16,15 +16,19 @@ import {
   exchangeWecomTicket,
   fetchCurrentUser,
   fetchPublicAuthProviders,
+  fetchWecomAuthorize,
   getAuthToken,
   login,
   loginByWecomCenterTicket,
+  loginByWecomDirectCallback,
   persistUser,
   wecomBindByCode,
   wecomBindByTicket,
   wecomErrorMessage,
+  type AuthSession,
   type PublicAuthProvider,
 } from '@/lib/auth';
+import { WecomQrLogin, type WecomEmbedSuccess } from './WecomQrLogin';
 import {
   applyZlTheme,
   getInitialZlTheme,
@@ -42,6 +46,8 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [wecomBusy, setWecomBusy] = useState(false);
+  const [wecomEmbedFailed, setWecomEmbedFailed] = useState(false);
+  const [wecomEmbedNonce, setWecomEmbedNonce] = useState(0);
   const [error, setError] = useState('');
   const [theme, setTheme] = useState<ZlTheme>(getInitialZlTheme);
   const [isCallbackView] = useState(() => hasWecomCallbackParams());
@@ -49,10 +55,22 @@ export function LoginPage() {
   const isWecomProvider = provider === 'wecom';
   const toggleLabel = theme === 'dark' ? '切换浅色背景' : '切换深色背景';
 
+  const finishWecomLogin = useCallback(
+    (session: AuthSession) => {
+      toast.success(`欢迎回来，${session.user.displayName || session.user.username}`);
+      void navigate({ to: '/', replace: true });
+    },
+    [navigate]
+  );
+
   useEffect(() => {
     applyZlTheme(theme);
     persistZlTheme(theme);
   }, [theme]);
+
+  useEffect(() => {
+    setWecomEmbedFailed(false);
+  }, [provider]);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,7 +102,6 @@ export function LoginPage() {
     const state = params.get('state');
     const errorCode = params.get('wecomError');
     if (!loginTicket && !centerTicket && !errorCode && !(code && state)) return;
-    // 一次性读取并清除回调参数，防止刷新或后退时重放
     for (const key of ['wecomTicket', 'ticket', 'code', 'state', 'wecomError']) {
       params.delete(key);
     }
@@ -94,7 +111,6 @@ export function LoginPage() {
       setError(wecomErrorMessage(errorCode));
       return;
     }
-    // 已登录（绑定弹窗场景）：绑定后 postMessage 通知主窗口并自动关窗
     if (getAuthToken() && ((code && state) || centerTicket)) {
       setWecomBusy(true);
       const bindRequest =
@@ -117,28 +133,25 @@ export function LoginPage() {
           );
           setError(message);
           if (window.opener) {
-            // 失败也自动关窗，具体原因由主窗口 toast 展示；稍作停留便于目视确认
             window.setTimeout(() => window.close(), 1500);
           }
         })
         .finally(() => setWecomBusy(false));
       return;
     }
-    // 未登录：登录流程
     setWecomBusy(true);
     const loginRequest = loginTicket
       ? exchangeWecomTicket(loginTicket)
       : loginByWecomCenterTicket(centerTicket ?? '');
     loginRequest
       .then(session => {
-        toast.success(`欢迎回来，${session.user.displayName || session.user.username}`);
-        void navigate({ to: '/', replace: true });
+        finishWecomLogin(session);
       })
       .catch(err => {
         setError(err instanceof Error ? err.message : '企业微信登录失败，请稍后重试');
       })
       .finally(() => setWecomBusy(false));
-  }, [navigate]);
+  }, [finishWecomLogin, navigate]);
 
   useEffect(() => {
     const handlePageShow = (event: PageTransitionEvent) => {
@@ -154,12 +167,35 @@ export function LoginPage() {
     return () => window.removeEventListener('pageshow', handlePageShow);
   }, []);
 
-  function startWecomLogin() {
+  async function startWecomLogin() {
     setWecomBusy(true);
     setError('');
-    window.location.assign('/api/auth/wecom/authorize');
-    // 后端失败时会 302 回登录页；超时未跳转时恢复按钮状态兜底
-    window.setTimeout(() => setWecomBusy(false), 4000);
+    try {
+      const response = await fetchWecomAuthorize();
+      window.location.assign(response.url);
+      window.setTimeout(() => setWecomBusy(false), 4000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '企业微信登录暂不可用，请稍后重试');
+      setWecomBusy(false);
+    }
+  }
+
+  async function handleWecomEmbedSuccess(payload: WecomEmbedSuccess) {
+    setWecomBusy(true);
+    setError('');
+    try {
+      const session =
+        payload.authMode === 'sso'
+          ? await loginByWecomCenterTicket(payload.ticket ?? '')
+          : await loginByWecomDirectCallback(payload.code ?? '', payload.state ?? '');
+      finishWecomLogin(session);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '企业微信登录失败，请稍后重试';
+      setError(message);
+      setWecomEmbedNonce(value => value + 1);
+    } finally {
+      setWecomBusy(false);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -330,29 +366,37 @@ export function LoginPage() {
                 />
               ) : null}
               {isWecomProvider ? (
-                <div
-                  className="flex flex-col items-center gap-2 rounded-2xl px-4 py-5 text-center"
-                  style={{
-                    background: 'var(--zl-control-bg)',
-                    border: '1px solid var(--zl-border)',
-                    color: 'var(--zl-text)',
-                  }}
-                >
-                  <span
-                    className="grid h-14 w-14 place-items-center rounded-full"
-                    style={{ background: 'rgba(59,130,246,0.14)' }}
+                wecomEmbedFailed ? (
+                  <div
+                    className="flex flex-col items-center gap-2 rounded-2xl px-4 py-5 text-center"
+                    style={{
+                      background: 'var(--zl-control-bg)',
+                      border: '1px solid var(--zl-border)',
+                      color: 'var(--zl-text)',
+                    }}
                   >
-                    <QrCode size={26} style={{ color: 'var(--zl-accent-text)' }} />
-                  </span>
-                  <p className="text-sm font-medium" style={{ color: 'var(--zl-text)' }}>
-                    企业微信扫码登录
-                  </p>
-                  <p className="text-xs leading-5" style={{ color: 'var(--zl-text-muted)' }}>
-                    点击下方按钮跳转至企业微信授权页，
-                    <br />
-                    使用企业微信 App 扫码确认后自动登录
-                  </p>
-                </div>
+                    <span
+                      className="grid h-14 w-14 place-items-center rounded-full"
+                      style={{ background: 'rgba(59,130,246,0.14)' }}
+                    >
+                      <QrCode size={26} style={{ color: 'var(--zl-accent-text)' }} />
+                    </span>
+                    <p className="text-sm font-medium" style={{ color: 'var(--zl-text)' }}>
+                      企业微信扫码登录
+                    </p>
+                    <p className="text-xs leading-5" style={{ color: 'var(--zl-text-muted)' }}>
+                      点击下方按钮跳转至企业微信授权页，
+                      <br />
+                      使用企业微信 App 扫码确认后自动登录
+                    </p>
+                  </div>
+                ) : (
+                  <WecomQrLogin
+                    key={wecomEmbedNonce}
+                    onSuccess={handleWecomEmbedSuccess}
+                    onFallback={() => setWecomEmbedFailed(true)}
+                  />
+                )
               ) : (
                 <>
                   <div>
@@ -444,19 +488,35 @@ export function LoginPage() {
                 ) : null}
               </div>
 
-              <button
-                type="submit"
-                disabled={loading || wecomBusy}
-                className="zl-login-submit flex h-12 w-full items-center justify-center gap-2 rounded-2xl text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-60"
-                style={{
-                  background: 'linear-gradient(135deg, #2563eb, #06b6d4)',
-                  color: '#fff',
-                  boxShadow: '0 18px 48px rgba(37,99,235,0.35)',
-                }}
-              >
-                {loading || wecomBusy ? <Loader2 size={17} className="zl-spinner" /> : null}
-                {loading || wecomBusy ? '处理中...' : isWecomProvider ? '企业微信扫码登录' : '登录'}
-              </button>
+              {isWecomProvider && !wecomEmbedFailed ? (
+                <button
+                  type="button"
+                  onClick={startWecomLogin}
+                  disabled={loading || wecomBusy}
+                  className="w-full text-center text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                  style={{ color: 'var(--zl-text-muted)' }}
+                >
+                  扫码异常？使用跳转方式登录
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={loading || wecomBusy}
+                  className="zl-login-submit flex h-12 w-full items-center justify-center gap-2 rounded-2xl text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                  style={{
+                    background: 'linear-gradient(135deg, #2563eb, #06b6d4)',
+                    color: '#fff',
+                    boxShadow: '0 18px 48px rgba(37,99,235,0.35)',
+                  }}
+                >
+                  {loading || wecomBusy ? <Loader2 size={17} className="zl-spinner" /> : null}
+                  {loading || wecomBusy
+                    ? '处理中...'
+                    : isWecomProvider
+                      ? '企业微信扫码登录'
+                      : '登录'}
+                </button>
+              )}
             </form>
           </div>
         </section>

@@ -203,6 +203,31 @@ export async function loginByWecomCenterTicket(ticket: string) {
   return session;
 }
 
+export async function loginByWecomDirectCallback(code: string, state: string) {
+  const session = await api<AuthSession>('/api/auth/wecom/login', {
+    method: 'POST',
+    auth: false,
+    body: JSON.stringify({ code, state }),
+  });
+  persistSession(session);
+  setCurrentUserSnapshot(session.user);
+  return session;
+}
+
+export type WecomAuthorizeEmbed = {
+  auth_mode: 'direct' | 'sso';
+  iframe_url: string;
+  state?: string;
+  callback_path: string;
+};
+
+// fetchWecomAuthorize 获取企业微信扫码登录跳转地址与内嵌二维码渲染参数（公开接口）
+export async function fetchWecomAuthorize() {
+  return api<{ url: string; embed?: WecomAuthorizeEmbed }>('/api/auth/wecom/authorize', {
+    auth: false,
+  });
+}
+
 export function fetchWecomBindUrl() {
   return api<{ url: string }>('/api/auth/wecom/bind-url');
 }

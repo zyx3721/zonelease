@@ -32,11 +32,12 @@ func swaggerPublicAuthProviders() {}
 
 // swaggerWecomAuthorize godoc
 // @Summary 发起企业微信登录
-// @Description 无需登录。企业微信认证启用后，302 跳转到企业微信授权页（直连模式，携带防伪 state，有效期取基础配置的企业微信扫码有效期）或统一认证中心登录页（认证中心模式）；未启用或配置不完整时同样 302 回前端登录页并携带 wecomError。
+// @Description 无需登录。企业微信认证启用后返回整页跳转地址与内嵌二维码渲染参数：直连模式签发防伪 state（有效期取基础配置的企业微信扫码有效期），url 的回跳指向后端回调，embed.iframe_url 的回跳指向前端中转路由 /wecom-qr-callback；认证中心模式返回认证中心登录入口。登录页默认以 iframe 内嵌渲染二维码，配置异常时回退整页跳转；未启用或配置不完整时返回错误。
 // @Tags Auth
 // @Produce json
-// @Success 302 {string} string "授权跳转地址"
+// @Success 200 {object} wecomAuthorizeResponse
 // @Failure 404 {object} errorDocResponse
+// @Failure 500 {object} errorDocResponse
 // @Failure 503 {object} errorDocResponse
 // @Router /api/auth/wecom/authorize [get]
 func swaggerWecomAuthorize() {}
@@ -68,12 +69,12 @@ func swaggerWecomCallback() {}
 func swaggerWecomExchange() {}
 
 // swaggerWecomLogin godoc
-// @Summary 企业微信统一认证中心票据登录
-// @Description 无需登录。认证中心回调路径配置为前端登录页时，前端持认证中心 ticket 调用本接口换取会话；仅统一认证中心模式可用，账号未绑定时返回 user_not_bound。
+// @Summary 企业微信扫码票据登录
+// @Description 无需登录。直连模式提交 code 与防伪 state 换取会话（登录页内嵌二维码扫码回跳后由父页面调用）；认证中心模式提交认证中心 ticket 换取会话（认证中心回调路径配置为前端中转路由或登录页时使用）。账号未绑定时返回 user_not_bound。
 // @Tags Auth
 // @Accept json
 // @Produce json
-// @Param body body wecomExchangeRequest true "认证中心 ticket"
+// @Param body body wecomLoginRequest true "登录参数：直连模式 code + state，认证中心模式 ticket"
 // @Success 200 {object} loginResponse
 // @Failure 400 {object} errorDocResponse
 // @Failure 401 {object} errorDocResponse
