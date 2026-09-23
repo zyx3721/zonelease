@@ -107,6 +107,42 @@ export function clearSession() {
   emitSessionChanged();
 }
 
+const AUTH_EXPIRED_FLAG_KEY = 'zonelease.auth.expired';
+let authRedirectingToLogin = false;
+
+// markAuthExpired 标记本次进入登录页由会话失效引起：仅认证请求收到 401 时调用，
+// 登录页挂载时消费该标记并提示重新登录；主动登出与未登录访问不产生标记
+export function markAuthExpired() {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(AUTH_EXPIRED_FLAG_KEY, '1');
+  } catch {
+    return;
+  }
+}
+
+// consumeAuthExpired 读取并清除会话失效标记，返回是否存在待提示的过期进入
+export function consumeAuthExpired() {
+  try {
+    const expired = sessionStorage.getItem(AUTH_EXPIRED_FLAG_KEY) === '1';
+    if (expired) sessionStorage.removeItem(AUTH_EXPIRED_FLAG_KEY);
+    return expired;
+  } catch {
+    return false;
+  }
+}
+
+// markAuthRedirecting 标记正以整页刷新跳转登录页，RequireAuth 据此跳过客户端跳转，
+// 避免"先无动画进入登录页、再整页刷新带加载动画"的重复进入
+export function markAuthRedirecting() {
+  authRedirectingToLogin = true;
+}
+
+// isAuthRedirecting 返回当前文档是否已触发会话失效的整页跳转
+export function isAuthRedirecting() {
+  return authRedirectingToLogin;
+}
+
 export function userHasPermission(user: AuthUser | null, permission: string) {
   if (!user) return false;
   if (user.role === 'admin') return true;
@@ -158,6 +194,8 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
   if (!response.ok) {
     const message = await readApiError(response);
     if (options.auth !== false && response.status === 401) {
+      markAuthExpired();
+      markAuthRedirecting();
       clearSession();
       if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
         window.location.assign('/login');

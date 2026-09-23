@@ -33,6 +33,7 @@ import {
   fetchWecomBindUrl,
   getStoredUser,
   getAuthToken,
+  isAuthRedirecting,
   logout,
   unbindWecom,
   userHasAnyPermission,
@@ -268,7 +269,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     if (!token) {
-      void navigate({ to: '/login', replace: true });
+      if (!isAuthRedirecting()) void navigate({ to: '/login', replace: true });
       setChecking(false);
       return;
     }
@@ -279,7 +280,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         if (cancelled) return;
-        void navigate({ to: '/login', replace: true });
+        if (!isAuthRedirecting()) void navigate({ to: '/login', replace: true });
         setChecking(false);
       });
     return () => {

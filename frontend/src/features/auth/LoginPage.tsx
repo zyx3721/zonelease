@@ -13,6 +13,7 @@ import {
 import { useBaseConfig } from '@/lib/branding';
 import {
   WECOM_BIND_RESULT_EVENT,
+  consumeAuthExpired,
   exchangeWecomTicket,
   fetchCurrentUser,
   fetchPublicAuthProviders,
@@ -67,6 +68,12 @@ export function LoginPage() {
     applyZlTheme(theme);
     persistZlTheme(theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (consumeAuthExpired()) {
+      toast.error('登录会话已过期，请重新登录');
+    }
+  }, []);
 
   useEffect(() => {
     setWecomEmbedFailed(false);
