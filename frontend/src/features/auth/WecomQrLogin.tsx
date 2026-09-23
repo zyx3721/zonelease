@@ -146,7 +146,7 @@ export function WecomQrLogin({ onSuccess }: WecomQrLoginProps) {
         });
         if (instance.el) {
           instance.el.style.width = '100%';
-          instance.el.style.height = '420px';
+          instance.el.style.height = '360px';
           instance.el.style.border = '1px solid var(--zl-border)';
         }
       } catch {
@@ -194,7 +194,7 @@ export function WecomQrLogin({ onSuccess }: WecomQrLoginProps) {
       <div
         ref={panelHostRef}
         className="flex w-full justify-center rounded-2xl"
-        style={{ minHeight: 420 }}
+        style={{ minHeight: 360 }}
       />
     );
   }
